@@ -36,12 +36,15 @@ DATA = HERE / "data"
 H = 21
 # --raw: use the unscaled, unclipped revision rev(t) in pp instead of the [-1, 1] signal
 RAW = "--raw" in sys.argv
-X = "rev" if RAW else "signal"
+# --cap075: signal = clip(rev, -0.75, 0.75) / 0.75, a fixed cap in pp mapped to [-1, 1]
+CAP = "--cap075" in sys.argv
+X = "rev" if RAW else "sig_cap075" if CAP else "signal"
 # --overlap: keep every weekly survey (21-session windows overlap ~4 weeks); Newey-West SEs
 OVERLAP = "--overlap" in sys.argv
 NW_LAGS = 5  # 21 sessions ~ 4.2 weeks of overlap
-SUFFIX = ("_raw" if RAW else "") + ("_overlap" if OVERLAP else "")
-XLABEL = "Raw revision (pp of GDP growth)" if RAW else "Signal"
+NQ = 10 if "--deciles" in sys.argv else 5
+SUFFIX = ("_raw" if RAW else "_cap075" if CAP else "") + ("_overlap" if OVERLAP else "") + ("_deciles" if NQ == 10 else "")
+XLABEL = ("Raw revision (pp of GDP growth)" if RAW else "Signal = clip(rev, ±0.75 pp) / 0.75" if CAP else "Signal")
 
 # --- 1-6: signal ---------------------------------------------------------------
 w = pd.read_csv(DATA / "focus_gdp_weekly.csv", index_col=0, parse_dates=True)
@@ -57,6 +60,7 @@ f["rev"] = (f["rev4"] + f["rev8"]) / 2
 f["scale"] = 2 * f["rev"].expanding(min_periods=52).std().shift(1)
 f["raw_ratio"] = f["rev"] / f["scale"]
 f["signal"] = f["raw_ratio"].clip(-1, 1)
+f["sig_cap075"] = f["rev"].clip(-0.75, 0.75) / 0.75
 
 # --- target and non-overlapping sample ----------------------------------------------
 px = pd.read_csv(DATA / "indices_daily.csv", index_col="date", parse_dates=True).dropna()
@@ -73,7 +77,8 @@ for d in f.index:
                  "SMLL_ret": r["SMLL"], "IBOV_ret": r["IBOV"], "fwd_rel": r["SMLL"] - r["IBOV"]})
     last_exit = px.index[i0 + H]
 ev = f.join(pd.DataFrame(rows).set_index("date"), how="inner")
-ev.to_csv(DATA / "focus_nonoverlap_fwd21.csv")
+ev.to_csv(DATA / f"focus_fwd21{SUFFIX}.csv")
+f.to_csv(DATA / "focus_signal_weekly.csv")  # every week's signal steps (used by focus_bt_cap075.py)
 
 # --- print the transformation with a worked example -------------------------------------
 pd.options.display.width = 220
@@ -120,7 +125,8 @@ plt.rcParams.update({
     "axes.labelcolor": INK2, "xtick.color": INK2, "ytick.color": INK2,
     "axes.edgecolor": GRID, "figure.facecolor": SURF, "axes.facecolor": SURF,
 })
-NQ = 5
+QN = "Decile" if NQ == 10 else "Quintile"
+QP = "D" if NQ == 10 else "Q"
 fig, axes = plt.subplots(2, 3, figsize=(14, 8.6), dpi=200, gridspec_kw={"height_ratios": [1.25, 1]})
 qrows = []
 for j, (name, e) in enumerate(samples.items()):
@@ -168,18 +174,19 @@ for j, (name, e) in enumerate(samples.items()):
     ax.errorbar(g.index, g["mean"], yerr=g["se"], fmt="none", ecolor=INK2, elinewidth=1, capsize=3, zorder=4)
     for qi, r in g.iterrows():
         off = r["se"] + 0.15
-        ax.text(qi, r["mean"] + (off if r["mean"] >= 0 else -off), f"{r['mean']:+.2f}", ha="center",
-                va="bottom" if r["mean"] >= 0 else "top", fontsize=8)
-    fmt = lambda v: f"{v:+.2f}" if v != 0 else "0"
+        ax.text(qi, r["mean"] + (off if r["mean"] >= 0 else -off), f"{r['mean']:+.2f}" if NQ == 5 else f"{r['mean']:+.1f}",
+                ha="center", va="bottom" if r["mean"] >= 0 else "top", fontsize=8 if NQ == 5 else 7)
+    fmt = lambda v: f"{v:+.2f}" if abs(v) > 1e-9 else "0"
     ax.set_xticks(g.index)
-    ax.set_xticklabels([f"Q{qi}\n{fmt(r.lo)}…{fmt(r.hi)}\nn={int(r.n)}" for qi, r in g.iterrows()], fontsize=7.5)
-    ax.set_ylim(-4.5, 4.5)
+    ax.set_xticklabels([f"{QP}{qi}\n{fmt(r.lo)}\n{fmt(r.hi)}\nn={int(r.n)}" for qi, r in g.iterrows()],
+                       fontsize=7.5 if NQ == 5 else 6)
+    ax.set_ylim(-5, 5)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.0f}" if v else "0"))
     if j == 0:
         ax.set_ylabel("Mean fwd 21-session return (pp)")
-    ax.set_title(f"Quintiles: Q5 − Q1 = {g.loc[NQ, 'mean'] - g.loc[1, 'mean']:+.2f} pp", loc="left",
+    ax.set_title(f"{QN}s: {QP}{NQ} − {QP}1 = {g.loc[NQ, 'mean'] - g.loc[1, 'mean']:+.2f} pp", loc="left",
                  fontsize=8.5, color=INK2)
-pd.concat(qrows).drop(columns="sd").to_csv(DATA / f"focus_quintiles_halves{SUFFIX}.csv", float_format="%.4f")
+pd.concat(qrows).drop(columns="sd").to_csv(DATA / f"focus_{QN.lower()}s_halves{SUFFIX}.csv", float_format="%.4f")
 
 from matplotlib.patches import Patch
 fig.legend([Patch(color=ORANGE), Patch(color=GRAY), Patch(color=AQUA)],
@@ -189,8 +196,9 @@ fig.suptitle("Focus GDP revisions vs. next 21-session small-cap relative return 
              + ("overlapping weekly windows" if OVERLAP else "non-overlapping, OLS"),
              x=0.05, ha="left", fontsize=13, fontweight="bold", y=0.985)
 fig.text(0.05, 0.935, ("x = rev = (rev4 + rev8)/2 in pp, no scaling or clipping" if RAW else
+         "Signal = clip(rev, −0.75, +0.75) / 0.75 with rev = (rev4 + rev8)/2 in pp" if CAP else
          "Signal = clip(((rev4 + rev8)/2) / (2 × past std), −1, 1)") + ", revisions to next-year GDP "
-         "median on the same target year. " + ("Every weekly survey (windows overlap); Newey-West "
+         "median on the same target year.\n" + ("Every weekly survey (windows overlap); Newey-West "
          f"({NW_LAGS} lags) SEs; error bars ±1 SE × √(21/5)." if OVERLAP else
          "One observation per 21-session window; standard OLS SEs. Error bars ±1 SE."), fontsize=8.5, color=INK2)
 fig.tight_layout(rect=(0, 0, 1, 0.9))
