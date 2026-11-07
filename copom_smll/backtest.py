@@ -2,7 +2,7 @@
 Simplified COPOM small-cap vs. large-cap backtest (no transaction costs).
 
 Rule, decided after each COPOM decision k (linear in the Selic change, bounded):
-  position = clip(-delta_bp / 100, -1, 1)
+  position = -clip(delta_bp, -100, 100) / 100, in [-1, 1]
   e.g. 100 bp+ cut -> 1.0x long SMLL / short IBOV, 25 bp cut -> 0.25x,
        50 bp hike -> 0.5x short SMLL / long IBOV, hold -> flat.
 For comparison, the sign-only rule (+1 cut, -1 hike, 0 hold) is also shown.
@@ -63,7 +63,7 @@ spread = spread.loc[pos.index]
 strat = pos * spread
 strat_sign = pos_sign * spread
 bench = spread
-NAMES = ["Linear, clipped to ±1", "Sign only (±1)", "Always long SMLL / short IBOV"]
+NAMES = ["Linear (Δ capped at ±100 bp)", "Sign only (±1)", "Always long SMLL / short IBOV"]
 curves = pd.DataFrame({n: (1 + r).cumprod() for n, r in zip(NAMES, [strat, strat_sign, bench])})
 
 
@@ -158,7 +158,7 @@ axd.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}"))
 s, g, b = tab.loc["Linear"], tab.loc["Sign"], tab.loc["Benchmark"]
 fig.suptitle("COPOM signal backtest: SMLL vs. IBOV spread", x=0.07, ha="left",
              fontsize=14, fontweight="bold", y=0.975)
-ax.set_title(f"Position = clip(−ΔSelic / 100 bp, −1, 1) (≥100 bp cut → 1× long small caps; hike → short; hold → flat). "
+ax.set_title(f"Position = −clip(ΔSelic, ±100 bp) / 100 bp (≥100 bp cut → 1× long small caps; hike → short; hold → flat). "
              f"Enter at close of session after decision; no costs.\n"
              f"Linear: CAGR {s.CAGR:+.1%}, Sharpe {s.Sharpe:.2f}, max DD {s['Max DD']:.0%}   ·   "
              f"Sign: CAGR {g.CAGR:+.1%}, Sharpe {g.Sharpe:.2f}, max DD {g['Max DD']:.0%}   ·   "

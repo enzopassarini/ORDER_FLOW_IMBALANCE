@@ -70,7 +70,7 @@ ax.set_title(f"{len(ev)} decisions, {ev.date.min():%b %Y} – {ev.date.max():%b 
              f"D10 − D1 = {spread:+.2f} pp.\nSignal has only 9 distinct values: ties at decile edges are split "
              f"by decision date, so D4–D6 are all holds and differ only by period.",
              loc="left", fontsize=8.5, color=INK2, pad=10)
-fig.text(0.07, 0.01, "Signal = clip(−ΔSelic / 100 bp, −1, 1). Window: close of first session after decision → "
+fig.text(0.07, 0.01, "Signal = −clip(ΔSelic, ±100 bp) / 100 bp, in [−1, 1]. Window: close of first session after decision → "
          "21 sessions later. Sources: B3, Banco Central do Brasil.", fontsize=7.5, color=MUTED)
 fig.tight_layout(rect=(0, 0.02, 1, 1))
 out = HERE / "signal_deciles.png"

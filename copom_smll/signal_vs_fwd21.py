@@ -1,7 +1,7 @@
 """
 Bounded COPOM signal vs. forward 21-session SMLL - IBOV relative return.
 
-Signal: clip(-delta_bp / 100, -1, 1), known after the decision-day close.
+Signal: -clip(delta_bp, -100, 100) / 100, in [-1, 1], known after the decision-day close.
 Forward return: from the close of the first session after the decision
 (the first tradable close) to the close 21 sessions later.
 Relative return = SMLL return - IBOV return over that window.
@@ -79,7 +79,7 @@ ax.set_xlim(-1.15, 1.15)
 ax.set_xticks(np.arange(-1, 1.01, 0.25))
 ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.2f}" if v else "0"))
 ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.0f}" if v else "0"))
-ax.set_xlabel("Signal = clip(−ΔSelic / 100 bp, −1, 1)    ← hike = short small caps   ·   cut = long small caps →")
+ax.set_xlabel("Signal = −clip(ΔSelic, ±100 bp) / 100 bp    ← hike = short small caps   ·   cut = long small caps →")
 ax.set_ylabel("SMLL − IBOV forward 21-session return (pp)")
 ax.legend(loc="upper left", frameon=False, fontsize=9, labelcolor=INK2)
 

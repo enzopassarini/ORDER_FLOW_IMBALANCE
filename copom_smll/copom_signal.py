@@ -1,9 +1,16 @@
-"""COPOM signal: linear in the Selic change, bounded to [-1, 1]."""
+"""COPOM signal: linear in the Selic change, deltas capped at +/-100 bp.
+
+    capped_delta = clip(delta_bp, -100, +100)
+    signal       = -capped_delta / 100          -> in [-1, 1]
+
+Cut -> positive signal (long small caps), hike -> negative, hold -> 0.
+E.g. -25 bp -> +0.25, -150 bp -> +1.00, +50 bp -> -0.50.
+"""
 import numpy as np
 
-SCALE_BP = 100.0  # a 100 bp move (or larger) is a full-size signal
+CAP_BP = 100.0
 
 
 def selic_signal(delta_bp):
-    """-delta_bp / 100, clipped to [-1, 1]. Cut -> positive (long small caps)."""
-    return np.clip(-np.asarray(delta_bp, dtype=float) / SCALE_BP, -1.0, 1.0) + 0.0  # no -0.0
+    capped = np.clip(np.asarray(delta_bp, dtype=float), -CAP_BP, CAP_BP)
+    return -capped / CAP_BP + 0.0  # + 0.0 turns -0.0 into 0.0
