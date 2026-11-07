@@ -34,6 +34,11 @@ import statsmodels.api as sm
 HERE = Path(__file__).parent
 DATA = HERE / "data"
 H = 21
+# --next-week: target = the return actually traded by focus_bt_cap075.py: from the close of the
+# first session after Friday t to the close of the first session after Friday t+1 (~5 sessions),
+# as a daily-rebalanced spread, prod(1 + r_SMLL - r_IBOV) - 1. Windows never overlap.
+NEXT_WEEK = "--next-week" in sys.argv
+HL = "next-week" if NEXT_WEEK else f"{H}-session"
 # --raw: use the unscaled, unclipped revision rev(t) in pp instead of the [-1, 1] signal
 RAW = "--raw" in sys.argv
 # --cap075: signal = clip(rev, -0.75, 0.75) / 0.75, a fixed cap in pp mapped to [-1, 1]
@@ -43,7 +48,7 @@ X = "rev" if RAW else "sig_cap075" if CAP else "signal"
 OVERLAP = "--overlap" in sys.argv
 NW_LAGS = 5  # 21 sessions ~ 4.2 weeks of overlap
 NQ = 10 if "--deciles" in sys.argv else 5
-SUFFIX = ("_raw" if RAW else "_cap075" if CAP else "") + ("_overlap" if OVERLAP else "") + ("_deciles" if NQ == 10 else "")
+SUFFIX = ("_nextweek" if NEXT_WEEK else "") + ("_raw" if RAW else "_cap075" if CAP else "") + ("_overlap" if OVERLAP else "") + ("_deciles" if NQ == 10 else "")
 XLABEL = ("Raw revision (pp of GDP growth)" if RAW else "Signal = clip(rev, ±0.75 pp) / 0.75" if CAP else "Signal")
 
 # --- 1-6: signal ---------------------------------------------------------------
@@ -66,7 +71,19 @@ f["sig_cap075"] = f["rev"].clip(-0.75, 0.75) / 0.75
 px = pd.read_csv(DATA / "indices_daily.csv", index_col="date", parse_dates=True).dropna()
 f = f[f.index >= px.index[0]].dropna(subset=["signal"])
 rows, last_exit = [], None
-for d in f.index:
+spread_d = (px["SMLL"].pct_change() - px["IBOV"].pct_change())
+for k, d in enumerate(f.index if NEXT_WEEK else []):
+    if k + 1 >= len(f.index):
+        break
+    i0 = px.index.searchsorted(d, side="right")
+    i1 = px.index.searchsorted(f.index[k + 1], side="right")
+    if i1 >= len(px) or i1 <= i0:
+        continue
+    rel = (1 + spread_d.iloc[i0 + 1: i1 + 1]).prod() - 1
+    r = px.iloc[i1] / px.iloc[i0] - 1
+    rows.append({"date": d, "entry": px.index[i0], "exit": px.index[i1], "sessions": i1 - i0,
+                 "SMLL_ret": r["SMLL"], "IBOV_ret": r["IBOV"], "fwd_rel": rel})
+for d in ([] if NEXT_WEEK else f.index):
     i0 = px.index.searchsorted(d, side="right")
     if i0 + H >= len(px):
         break
@@ -77,7 +94,7 @@ for d in f.index:
                  "SMLL_ret": r["SMLL"], "IBOV_ret": r["IBOV"], "fwd_rel": r["SMLL"] - r["IBOV"]})
     last_exit = px.index[i0 + H]
 ev = f.join(pd.DataFrame(rows).set_index("date"), how="inner")
-ev.to_csv(DATA / f"focus_fwd21{SUFFIX}.csv")
+ev.to_csv(DATA / (f"focus_fwd{SUFFIX}.csv" if NEXT_WEEK else f"focus_fwd21{SUFFIX}.csv"))
 f.to_csv(DATA / "focus_signal_weekly.csv")  # every week's signal steps (used by focus_bt_cap075.py)
 
 # --- print the transformation with a worked example -------------------------------------
@@ -114,7 +131,7 @@ for name, e in samples.items():
 tab = pd.DataFrame(res).set_index("sample")
 tab.to_csv(DATA / f"focus_ols_halves{SUFFIX}.csv", float_format="%.4f")
 pd.options.display.float_format = "{:.3f}".format
-print(f"\nOLS: fwd 21-session SMLL-IBOV return (pp) on {X}")
+print(f"\nOLS: fwd {HL} SMLL-IBOV return (pp) on {X}")
 print(tab.to_string())
 
 # --- plot: scatter row + quintile row -----------------------------------------------------
@@ -143,7 +160,7 @@ for j, (name, e) in enumerate(samples.items()):
     ax.plot(xs, st.intercept_pp + st.slope_pp * xs, color=INK, lw=2, zorder=4)
     pad = 0.05 * (ev[X].max() - ev[X].min())
     ax.set_xlim(ev[X].min() - pad, ev[X].max() + pad)
-    ax.set_ylim(-16, 16)
+    ax.set_ylim(-16, 16) if not NEXT_WEEK else ax.set_ylim(-8, 8)
     se_txt = (f"Newey-West SE {st.se_NW:.2f}  t {st.t_NW:+.2f}  p {st.p_NW:.3f}\n(plain OLS t {st.t:+.2f})  "
               if OVERLAP else f"SE {st.se_slope:.2f}  t {st.t:+.2f}  p {st.p:.3f}\n")
     ax.set_title(f"{name}\nn={int(st.n)}  slope {st.slope_pp:+.2f} pp  {se_txt}"
@@ -151,7 +168,7 @@ for j, (name, e) in enumerate(samples.items()):
                  loc="left", fontsize=8.5, color=INK2)
     ax.set_xlabel(f"{XLABEL}  ← downgrade · upgrade →")
     if j == 0:
-        ax.set_ylabel("SMLL − IBOV fwd 21-session return (pp)")
+        ax.set_ylabel(f"SMLL − IBOV fwd {HL} return (pp)")
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.0f}" if v else "0"))
 
     # quintiles; ties (mostly zeros) split by date
@@ -174,16 +191,16 @@ for j, (name, e) in enumerate(samples.items()):
     ax.errorbar(g.index, g["mean"], yerr=g["se"], fmt="none", ecolor=INK2, elinewidth=1, capsize=3, zorder=4)
     for qi, r in g.iterrows():
         off = r["se"] + 0.15
-        ax.text(qi, r["mean"] + (off if r["mean"] >= 0 else -off), f"{r['mean']:+.2f}" if NQ == 5 else f"{r['mean']:+.1f}",
+        ax.text(qi, r["mean"] + (off if r["mean"] >= 0 else -off), f"{r['mean']:+.2f}" if (NQ == 5 or NEXT_WEEK) else f"{r['mean']:+.1f}",
                 ha="center", va="bottom" if r["mean"] >= 0 else "top", fontsize=8 if NQ == 5 else 7)
     fmt = lambda v: f"{v:+.2f}" if abs(v) > 1e-9 else "0"
     ax.set_xticks(g.index)
     ax.set_xticklabels([f"{QP}{qi}\n{fmt(r.lo)}\n{fmt(r.hi)}\nn={int(r.n)}" for qi, r in g.iterrows()],
                        fontsize=7.5 if NQ == 5 else 6)
-    ax.set_ylim(-5, 5)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.0f}" if v else "0"))
+    ax.set_ylim(-5, 5) if not NEXT_WEEK else ax.set_ylim(-1.2, 1.2)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: (f"{v:+.1f}" if NEXT_WEEK else f"{v:+.0f}") if v else "0"))
     if j == 0:
-        ax.set_ylabel("Mean fwd 21-session return (pp)")
+        ax.set_ylabel(f"Mean fwd {HL} return (pp)")
     ax.set_title(f"{QN}s: {QP}{NQ} − {QP}1 = {g.loc[NQ, 'mean'] - g.loc[1, 'mean']:+.2f} pp", loc="left",
                  fontsize=8.5, color=INK2)
 pd.concat(qrows).drop(columns="sd").to_csv(DATA / f"focus_{QN.lower()}s_halves{SUFFIX}.csv", float_format="%.4f")
@@ -192,13 +209,15 @@ from matplotlib.patches import Patch
 fig.legend([Patch(color=ORANGE), Patch(color=GRAY), Patch(color=AQUA)],
            ["Downgrade (< 0)", "Mostly no revision (0)", "Upgrade (> 0)"],
            loc="upper left", bbox_to_anchor=(0.045, 0.925), frameon=False, fontsize=8.5, ncol=3, labelcolor=INK2)
-fig.suptitle("Focus GDP revisions vs. next 21-session small-cap relative return — "
-             + ("overlapping weekly windows" if OVERLAP else "non-overlapping, OLS"),
+fig.suptitle(f"Focus GDP revisions vs. {HL} small-cap relative return" + (" (Monday → Monday)" if NEXT_WEEK else "") + " — "
+             + ("one week per observation, OLS" if NEXT_WEEK else "overlapping weekly windows" if OVERLAP else "non-overlapping, OLS"),
              x=0.05, ha="left", fontsize=13, fontweight="bold", y=0.985)
 fig.text(0.05, 0.935, ("x = rev = (rev4 + rev8)/2 in pp, no scaling or clipping" if RAW else
          "Signal = clip(rev, −0.75, +0.75) / 0.75 with rev = (rev4 + rev8)/2 in pp" if CAP else
          "Signal = clip(((rev4 + rev8)/2) / (2 × past std), −1, 1)") + ", revisions to next-year GDP "
-         "median on the same target year.\n" + ("Every weekly survey (windows overlap); Newey-West "
+         "median on the same target year.\n" + ("Every weekly survey; return from Monday close after the survey to "
+         "Monday close after the next survey (the backtest's holding period); standard OLS SEs. Error bars ±1 SE."
+         if NEXT_WEEK else "Every weekly survey (windows overlap); Newey-West "
          f"({NW_LAGS} lags) SEs; error bars ±1 SE × √(21/5)." if OVERLAP else
          "One observation per 21-session window; standard OLS SEs. Error bars ±1 SE."), fontsize=8.5, color=INK2)
 fig.tight_layout(rect=(0, 0, 1, 0.9))
