@@ -17,10 +17,13 @@ Signal construction (all steps printed by this script with a worked example):
 Target: y(t) = SMLL return - IBOV return from the close of the first session after
 Friday t (Monday, when the report is public) to the close 21 sessions later.
 
+Run with --raw to use rev(t) in pp (step 4, no scaling or clipping) as the regressor.
+
 Non-overlapping sample: start at the first Friday; each next observation is the
 first Friday whose entry session is on or after the previous observation's exit
 session, so no two windows share a day of returns.
 """
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -31,6 +34,11 @@ import statsmodels.api as sm
 HERE = Path(__file__).parent
 DATA = HERE / "data"
 H = 21
+# --raw: use the unscaled, unclipped revision rev(t) in pp instead of the [-1, 1] signal
+RAW = "--raw" in sys.argv
+X = "rev" if RAW else "signal"
+SUFFIX = "_raw" if RAW else ""
+XLABEL = "Raw revision (pp of GDP growth)" if RAW else "Signal"
 
 # --- 1-6: signal ---------------------------------------------------------------
 w = pd.read_csv(DATA / "focus_gdp_weekly.csv", index_col=0, parse_dates=True)
@@ -83,20 +91,20 @@ samples = {
 }
 res = []
 for name, e in samples.items():
-    x, y = e["signal"], e["fwd_rel"] * 100
+    x, y = e[X], e["fwd_rel"] * 100
     m = sm.OLS(y, sm.add_constant(x)).fit()
     nz = x != 0
-    res.append({"sample": name, "n": int(m.nobs), "intercept_pp": m.params["const"], "slope_pp": m.params["signal"],
-                "se_slope": m.bse["signal"], "t": m.tvalues["signal"], "p": m.pvalues["signal"],
+    res.append({"sample": name, "n": int(m.nobs), "intercept_pp": m.params["const"], "slope_pp": m.params[X],
+                "se_slope": m.bse[X], "t": m.tvalues[X], "p": m.pvalues[X],
                 "R2": m.rsquared, "corr": np.corrcoef(x, y)[0, 1],
                 "hit": (np.sign(x[nz]) == np.sign(y[nz])).mean(),
                 "mean_down": y[x < 0].mean(), "n_down": int((x < 0).sum()),
                 "mean_zero": y[x == 0].mean(), "n_zero": int((x == 0).sum()),
                 "mean_up": y[x > 0].mean(), "n_up": int((x > 0).sum())})
 tab = pd.DataFrame(res).set_index("sample")
-tab.to_csv(DATA / "focus_ols_halves.csv", float_format="%.4f")
+tab.to_csv(DATA / f"focus_ols_halves{SUFFIX}.csv", float_format="%.4f")
 pd.options.display.float_format = "{:.3f}".format
-print("\nOLS: fwd 21-session SMLL-IBOV return (pp) on signal")
+print(f"\nOLS: fwd 21-session SMLL-IBOV return (pp) on {X}")
 print(tab.to_string())
 
 # --- plot: scatter row + quintile row -----------------------------------------------------
@@ -112,7 +120,7 @@ fig, axes = plt.subplots(2, 3, figsize=(14, 8.6), dpi=200, gridspec_kw={"height_
 qrows = []
 for j, (name, e) in enumerate(samples.items()):
     st = tab.loc[name]
-    x, y = e["signal"].to_numpy(), e["fwd_rel"].to_numpy() * 100
+    x, y = e[X].to_numpy(), e["fwd_rel"].to_numpy() * 100
     ax = axes[0, j]
     ax.grid(True, color=GRID, lw=0.8, zorder=0)
     ax.axhline(0, color=MUTED, lw=1, zorder=1)
@@ -120,23 +128,24 @@ for j, (name, e) in enumerate(samples.items()):
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
     ax.scatter(x, y, s=22, color=BLUE, alpha=0.65, edgecolor=SURF, lw=0.6, zorder=3)
-    xs = np.linspace(-1, 1, 20)
+    xs = np.linspace(ev[X].min(), ev[X].max(), 20)
     ax.plot(xs, st.intercept_pp + st.slope_pp * xs, color=INK, lw=2, zorder=4)
-    ax.set_xlim(-1.1, 1.1)
+    pad = 0.05 * (ev[X].max() - ev[X].min())
+    ax.set_xlim(ev[X].min() - pad, ev[X].max() + pad)
     ax.set_ylim(-16, 16)
     ax.set_title(f"{name}\nn={int(st.n)}  slope {st.slope_pp:+.2f} pp (SE {st.se_slope:.2f})  t {st.t:+.2f}  "
                  f"p {st.p:.3f}\nR² {st.R2:.3f}  ρ {st['corr']:+.2f}  hit {st.hit:.0%}",
                  loc="left", fontsize=8.5, color=INK2)
-    ax.set_xlabel("Signal  ← downgrade · upgrade →")
+    ax.set_xlabel(f"{XLABEL}  ← downgrade · upgrade →")
     if j == 0:
         ax.set_ylabel("SMLL − IBOV fwd 21-session return (pp)")
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.0f}" if v else "0"))
 
     # quintiles; ties (mostly zeros) split by date
-    q = pd.qcut(e["signal"].rank(method="first"), NQ, labels=range(1, NQ + 1)).astype(int)
-    g = e.assign(q=q).groupby("q").agg(n=("fwd_rel", "size"), lo=("signal", "min"), hi=("signal", "max"),
-                                       zero=("signal", lambda v: (v == 0).mean()),
-                                       sig=("signal", "mean"), mean=("fwd_rel", "mean"), sd=("fwd_rel", "std"))
+    q = pd.qcut(e[X].rank(method="first"), NQ, labels=range(1, NQ + 1)).astype(int)
+    g = e.assign(q=q).groupby("q").agg(n=("fwd_rel", "size"), lo=(X, "min"), hi=(X, "max"),
+                                       zero=(X, lambda v: (v == 0).mean()),
+                                       sig=(X, "mean"), mean=("fwd_rel", "mean"), sd=("fwd_rel", "std"))
     g["mean"] *= 100
     g["se"] = g["sd"] * 100 / np.sqrt(g["n"])
     qrows.append(g.assign(sample=name))
@@ -161,17 +170,18 @@ for j, (name, e) in enumerate(samples.items()):
         ax.set_ylabel("Mean fwd 21-session return (pp)")
     ax.set_title(f"Quintiles: Q5 − Q1 = {g.loc[NQ, 'mean'] - g.loc[1, 'mean']:+.2f} pp", loc="left",
                  fontsize=8.5, color=INK2)
-pd.concat(qrows).drop(columns="sd").to_csv(DATA / "focus_quintiles_halves.csv", float_format="%.4f")
+pd.concat(qrows).drop(columns="sd").to_csv(DATA / f"focus_quintiles_halves{SUFFIX}.csv", float_format="%.4f")
 
 from matplotlib.patches import Patch
 fig.legend([Patch(color=ORANGE), Patch(color=GRAY), Patch(color=AQUA)],
-           ["Downgrade (signal < 0)", "Mostly no revision (0)", "Upgrade (signal > 0)"],
+           ["Downgrade (< 0)", "Mostly no revision (0)", "Upgrade (> 0)"],
            loc="upper left", bbox_to_anchor=(0.045, 0.925), frameon=False, fontsize=8.5, ncol=3, labelcolor=INK2)
 fig.suptitle("Focus GDP revisions vs. next 21-session small-cap relative return — non-overlapping, OLS",
              x=0.05, ha="left", fontsize=13, fontweight="bold", y=0.985)
-fig.text(0.05, 0.935, "Signal = clip(((rev4 + rev8)/2) / (2 × past std), −1, 1), revisions to next-year GDP "
+fig.text(0.05, 0.935, ("x = rev = (rev4 + rev8)/2 in pp, no scaling or clipping" if RAW else
+         "Signal = clip(((rev4 + rev8)/2) / (2 × past std), −1, 1)") + ", revisions to next-year GDP "
          "median on the same target year. One observation per 21-session window; standard OLS SEs. "
          "Error bars ±1 SE.", fontsize=8.5, color=INK2)
 fig.tight_layout(rect=(0, 0, 1, 0.9))
-fig.savefig(HERE / "focus_ols_halves.png")
-print("saved", HERE / "focus_ols_halves.png")
+fig.savefig(HERE / f"focus_ols_halves{SUFFIX}.png")
+print("saved", HERE / f"focus_ols_halves{SUFFIX}.png")
