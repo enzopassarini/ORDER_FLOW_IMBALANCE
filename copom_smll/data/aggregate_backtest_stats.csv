@@ -1,0 +1,4 @@
+,CAGR,Vol,Sharpe,MaxDD,Sharpe 1st half,Sharpe 2nd half,avg |pos|
+Aggregate (equal-risk),0.023,0.043,0.544,-0.093,0.786,0.308,0.233
+Focus (4 tranches),0.021,0.043,0.499,-0.106,0.669,0.282,0.197
+COPOM linear,0.024,0.067,0.387,-0.166,0.524,0.253,0.373
