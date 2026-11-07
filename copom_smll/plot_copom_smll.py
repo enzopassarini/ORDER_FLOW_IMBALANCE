@@ -1,8 +1,10 @@
 """
 Selic-target decision delta vs. SMLL-minus-IBOV return until the next COPOM.
 
-Window: COPOM decisions are announced after the B3 close, so the window runs
-from the close of decision day t to the close of the next decision day t+1.
+Window: COPOM decisions are announced after the B3 close, so they are only
+tradable on the next session. The window is shifted by one trading day: it runs
+from the close of the first session after decision k to the close of the first
+session after decision k+1.
 Relative return = SMLL return - IBOV return over that window (simple returns).
 """
 from pathlib import Path
@@ -19,14 +21,17 @@ copom = pd.read_csv(DATA / "copom_decisions.csv", parse_dates=["date"])
 copom = copom[copom["date"] >= px.index[0]].reset_index(drop=True)
 
 
-def close_on_or_before(d):
-    return px.loc[:d].iloc[-1]
+def close_next_session(d):
+    """Close of the first trading session strictly after date d."""
+    return px.loc[px.index > d].iloc[0]
 
 
 rows = []
 for i in range(len(copom) - 1):
     d0, d1 = copom.loc[i, "date"], copom.loc[i + 1, "date"]
-    p0, p1 = close_on_or_before(d0), close_on_or_before(d1)
+    if (px.index > d1).sum() == 0:
+        continue  # next decision not yet followed by a session
+    p0, p1 = close_next_session(d0), close_next_session(d1)
     r = p1 / p0 - 1
     rows.append({
         "meeting": copom.loc[i, "meeting"], "date": d0, "next_date": d1,
@@ -92,7 +97,7 @@ txt = "   ".join(f"{k}: n={int(r['count'])}, mean {r['mean']:+.2f} pp" for k, r 
 fig.suptitle("Selic decisions vs. small-cap relative performance", x=0.07, ha="left",
              fontsize=14, fontweight="bold", y=0.975)
 ax.set_title(f"Each dot is one COPOM decision, {ev['date'].min():%b %Y} – {ev['date'].max():%b %Y}. "
-             f"Window: decision-day close → next decision-day close.\n{txt}",
+             f"Window: close of session after decision → close of session after next decision.\n{txt}",
              loc="left", fontsize=9, color=INK2, pad=10)
 ax.legend(loc="upper right", frameon=False, fontsize=9, labelcolor=INK2)
 fig.text(0.07, 0.01, "Sources: B3 (IBOV, SMLL daily closes); Banco Central do Brasil (COPOM history).",
