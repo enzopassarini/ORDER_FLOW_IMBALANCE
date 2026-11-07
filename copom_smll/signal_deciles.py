@@ -23,6 +23,8 @@ dec["mean"] *= 100
 dec["se"] = dec["std"] * 100 / np.sqrt(dec["n"])
 dec.drop(columns="std").round(3).to_csv(HERE / "data" / "signal_deciles.csv")
 spread = dec.loc[10, "mean"] - dec.loc[1, "mean"]
+holds = dec.index[(dec["lo"] == 0) & (dec["hi"] == 0)]
+hold_txt = f"D{holds.min()}–D{holds.max()}" if len(holds) > 1 else f"D{holds.min()}"
 print(dec.drop(columns="std").round(2))
 print(f"D10 - D1 = {spread:+.2f} pp")
 
@@ -39,7 +41,7 @@ ax.axhline(0, color=MUTED, lw=1, zorder=1)
 for s in ("top", "right"):
     ax.spines[s].set_visible(False)
 
-colors = [BLUE if m > 0 else ORANGE if m < 0 else GRAY for m in dec["sig"]]
+colors = [ORANGE if m > 0 else BLUE if m < 0 else GRAY for m in dec["sig"]]
 ax.bar(dec.index, dec["mean"], width=0.72, color=colors, zorder=3)
 ax.errorbar(dec.index, dec["mean"], yerr=dec["se"], fmt="none", ecolor=INK2, elinewidth=1,
             capsize=3, zorder=4)
@@ -57,20 +59,20 @@ hi_y = (dec["mean"] + dec["se"]).max() + 0.5
 ax.set_ylim(lo_y, hi_y)
 ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.1f}" if v else "0"))
 ax.set_ylabel("Mean SMLL − IBOV fwd 21-session return (pp)")
-ax.set_xlabel("Signal decile (signal range, count)")
+ax.set_xlabel("Signal decile (signal range, count)    ← biggest cuts   ·   biggest hikes →")
 
 from matplotlib.patches import Patch
-ax.legend([Patch(color=ORANGE), Patch(color=GRAY), Patch(color=BLUE)],
-          ["Hike (short small caps)", "Hold (signal 0)", "Cut (long small caps)"],
-          loc="upper left", frameon=False, fontsize=9, labelcolor=INK2)
+ax.legend([Patch(color=BLUE), Patch(color=GRAY), Patch(color=ORANGE)],
+          ["Cut (signal < 0)", "Hold (signal 0)", "Hike (signal > 0)"],
+          loc="upper right", frameon=False, fontsize=9, labelcolor=INK2)
 
 fig.suptitle("COPOM signal deciles vs. next-month small-cap relative return", x=0.07, ha="left",
              fontsize=14, fontweight="bold", y=0.975)
 ax.set_title(f"{len(ev)} decisions, {ev.date.min():%b %Y} – {ev.date.max():%b %Y}. Error bars ±1 standard error. "
              f"D10 − D1 = {spread:+.2f} pp.\nSignal has only 9 distinct values: ties at decile edges are split "
-             f"by decision date, so D4–D6 are all holds and differ only by period.",
+             f"by decision date, so {hold_txt} are all holds and differ only by period.",
              loc="left", fontsize=8.5, color=INK2, pad=10)
-fig.text(0.07, 0.01, "Signal = −clip(ΔSelic, ±100 bp) / 100 bp, in [−1, 1]. Window: close of first session after decision → "
+fig.text(0.07, 0.01, "Signal = clip(ΔSelic, ±100 bp) / 100 bp, in [−1, 1]. Window: close of first session after decision → "
          "21 sessions later. Sources: B3, Banco Central do Brasil.", fontsize=7.5, color=MUTED)
 fig.tight_layout(rect=(0, 0.02, 1, 1))
 out = HERE / "signal_deciles.png"

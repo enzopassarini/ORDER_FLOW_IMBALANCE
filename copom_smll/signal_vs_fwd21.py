@@ -1,7 +1,7 @@
 """
 Bounded COPOM signal vs. forward 21-session SMLL - IBOV relative return.
 
-Signal: -clip(delta_bp, -100, 100) / 100, in [-1, 1], known after the decision-day close.
+Signal: clip(delta_bp, -100, 100) / 100, in [-1, 1] (positive = hike), known after the decision-day close.
 Forward return: from the close of the first session after the decision
 (the first tradable close) to the close 21 sessions later.
 Relative return = SMLL return - IBOV return over that window.
@@ -41,7 +41,8 @@ n = len(ev)
 slope, intercept = np.polyfit(x, y, 1)
 corr = np.corrcoef(x, y)[0, 1]
 t_stat = corr * np.sqrt((n - 2) / (1 - corr ** 2))
-hit = (np.sign(x[x != 0]) == np.sign(y[x != 0])).mean()
+# hikes (signal > 0) predict small-cap underperformance, so a hit is opposite signs
+hit = (np.sign(x[x != 0]) == -np.sign(y[x != 0])).mean()
 grp = ev.groupby("signal")["fwd21_rel"].agg(["count", "mean"])
 grp["mean"] *= 100
 print(grp.round(2))
@@ -79,14 +80,14 @@ ax.set_xlim(-1.15, 1.15)
 ax.set_xticks(np.arange(-1, 1.01, 0.25))
 ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.2f}" if v else "0"))
 ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.0f}" if v else "0"))
-ax.set_xlabel("Signal = −clip(ΔSelic, ±100 bp) / 100 bp    ← hike = short small caps   ·   cut = long small caps →")
+ax.set_xlabel("Signal = clip(ΔSelic, ±100 bp) / 100 bp    ← Selic cut   ·   Selic hike →")
 ax.set_ylabel("SMLL − IBOV forward 21-session return (pp)")
-ax.legend(loc="upper left", frameon=False, fontsize=9, labelcolor=INK2)
+ax.legend(loc="upper right", frameon=False, fontsize=9, labelcolor=INK2)
 
 fig.suptitle("COPOM signal vs. next-month small-cap relative return", x=0.07, ha="left",
              fontsize=14, fontweight="bold", y=0.975)
 ax.set_title(f"{n} decisions, {ev['date'].min():%b %Y} – {ev['date'].max():%b %Y}. Window: close of first session "
-             f"after decision → 21 sessions later.\nHit rate when signal ≠ 0: {hit:.0%}",
+             f"after decision → 21 sessions later.\nHit rate when signal ≠ 0 (cut → SMLL beats IBOV, hike → SMLL lags): {hit:.0%}",
              loc="left", fontsize=9, color=INK2, pad=10)
 fig.text(0.07, 0.01, "Sources: B3 (IBOV, SMLL daily closes); Banco Central do Brasil (COPOM history).",
          fontsize=7.5, color=MUTED)
