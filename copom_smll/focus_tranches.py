@@ -34,6 +34,7 @@ def daily_pos(s):
 pos = pd.DataFrame({k: daily_pos(v) for k, v in variants.items()}).dropna()
 sp = spread.loc[pos.index]
 ret = pos.mul(sp, axis=0)
+pos.join(ret, rsuffix="_ret").to_csv(DATA / "focus_tranches_daily.csv")
 
 
 def perf(r):
