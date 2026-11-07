@@ -37,7 +37,10 @@ H = 21
 # --raw: use the unscaled, unclipped revision rev(t) in pp instead of the [-1, 1] signal
 RAW = "--raw" in sys.argv
 X = "rev" if RAW else "signal"
-SUFFIX = "_raw" if RAW else ""
+# --overlap: keep every weekly survey (21-session windows overlap ~4 weeks); Newey-West SEs
+OVERLAP = "--overlap" in sys.argv
+NW_LAGS = 5  # 21 sessions ~ 4.2 weeks of overlap
+SUFFIX = ("_raw" if RAW else "") + ("_overlap" if OVERLAP else "")
 XLABEL = "Raw revision (pp of GDP growth)" if RAW else "Signal"
 
 # --- 1-6: signal ---------------------------------------------------------------
@@ -63,7 +66,7 @@ for d in f.index:
     i0 = px.index.searchsorted(d, side="right")
     if i0 + H >= len(px):
         break
-    if last_exit is not None and px.index[i0] < last_exit:
+    if not OVERLAP and last_exit is not None and px.index[i0] < last_exit:
         continue
     r = px.iloc[i0 + H] / px.iloc[i0] - 1
     rows.append({"date": d, "entry": px.index[i0], "exit": px.index[i0 + H],
@@ -75,7 +78,7 @@ ev.to_csv(DATA / "focus_nonoverlap_fwd21.csv")
 # --- print the transformation with a worked example -------------------------------------
 pd.options.display.width = 220
 pd.options.display.float_format = "{:.4f}".format
-print("Signal steps for the last 6 observations in the non-overlapping sample:")
+print(f"Signal steps for the last 6 observations ({'overlapping weekly' if OVERLAP else 'non-overlapping'} sample):")
 print(ev[["Y", "M_t", "M_t-4w", "rev4", "M_t-8w", "rev8", "rev", "scale", "raw_ratio", "signal",
           "entry", "exit", "fwd_rel"]].tail(6).to_string())
 print(f"\nSignal distribution (n={len(ev)}): zero {(ev.signal == 0).mean():.0%}, "
@@ -93,9 +96,11 @@ res = []
 for name, e in samples.items():
     x, y = e[X], e["fwd_rel"] * 100
     m = sm.OLS(y, sm.add_constant(x)).fit()
+    m_nw = sm.OLS(y, sm.add_constant(x)).fit(cov_type="HAC", cov_kwds={"maxlags": NW_LAGS})
     nz = x != 0
     res.append({"sample": name, "n": int(m.nobs), "intercept_pp": m.params["const"], "slope_pp": m.params[X],
                 "se_slope": m.bse[X], "t": m.tvalues[X], "p": m.pvalues[X],
+                "se_NW": m_nw.bse[X], "t_NW": m_nw.tvalues[X], "p_NW": m_nw.pvalues[X],
                 "R2": m.rsquared, "corr": np.corrcoef(x, y)[0, 1],
                 "hit": (np.sign(x[nz]) == np.sign(y[nz])).mean(),
                 "mean_down": y[x < 0].mean(), "n_down": int((x < 0).sum()),
@@ -133,8 +138,10 @@ for j, (name, e) in enumerate(samples.items()):
     pad = 0.05 * (ev[X].max() - ev[X].min())
     ax.set_xlim(ev[X].min() - pad, ev[X].max() + pad)
     ax.set_ylim(-16, 16)
-    ax.set_title(f"{name}\nn={int(st.n)}  slope {st.slope_pp:+.2f} pp (SE {st.se_slope:.2f})  t {st.t:+.2f}  "
-                 f"p {st.p:.3f}\nR² {st.R2:.3f}  ρ {st['corr']:+.2f}  hit {st.hit:.0%}",
+    se_txt = (f"Newey-West SE {st.se_NW:.2f}  t {st.t_NW:+.2f}  p {st.p_NW:.3f}\n(plain OLS t {st.t:+.2f})  "
+              if OVERLAP else f"SE {st.se_slope:.2f}  t {st.t:+.2f}  p {st.p:.3f}\n")
+    ax.set_title(f"{name}\nn={int(st.n)}  slope {st.slope_pp:+.2f} pp  {se_txt}"
+                 f"R² {st.R2:.3f}  ρ {st['corr']:+.2f}  hit {st.hit:.0%}",
                  loc="left", fontsize=8.5, color=INK2)
     ax.set_xlabel(f"{XLABEL}  ← downgrade · upgrade →")
     if j == 0:
@@ -148,6 +155,8 @@ for j, (name, e) in enumerate(samples.items()):
                                        sig=(X, "mean"), mean=("fwd_rel", "mean"), sd=("fwd_rel", "std"))
     g["mean"] *= 100
     g["se"] = g["sd"] * 100 / np.sqrt(g["n"])
+    if OVERLAP:
+        g["se"] *= np.sqrt(H / 5)  # ~4 overlapping weeks per window: inflate naive SE
     qrows.append(g.assign(sample=name))
     ax = axes[1, j]
     ax.grid(True, axis="y", color=GRID, lw=0.8, zorder=0)
@@ -176,12 +185,14 @@ from matplotlib.patches import Patch
 fig.legend([Patch(color=ORANGE), Patch(color=GRAY), Patch(color=AQUA)],
            ["Downgrade (< 0)", "Mostly no revision (0)", "Upgrade (> 0)"],
            loc="upper left", bbox_to_anchor=(0.045, 0.925), frameon=False, fontsize=8.5, ncol=3, labelcolor=INK2)
-fig.suptitle("Focus GDP revisions vs. next 21-session small-cap relative return — non-overlapping, OLS",
+fig.suptitle("Focus GDP revisions vs. next 21-session small-cap relative return — "
+             + ("overlapping weekly windows" if OVERLAP else "non-overlapping, OLS"),
              x=0.05, ha="left", fontsize=13, fontweight="bold", y=0.985)
 fig.text(0.05, 0.935, ("x = rev = (rev4 + rev8)/2 in pp, no scaling or clipping" if RAW else
          "Signal = clip(((rev4 + rev8)/2) / (2 × past std), −1, 1)") + ", revisions to next-year GDP "
-         "median on the same target year. One observation per 21-session window; standard OLS SEs. "
-         "Error bars ±1 SE.", fontsize=8.5, color=INK2)
+         "median on the same target year. " + ("Every weekly survey (windows overlap); Newey-West "
+         f"({NW_LAGS} lags) SEs; error bars ±1 SE × √(21/5)." if OVERLAP else
+         "One observation per 21-session window; standard OLS SEs. Error bars ±1 SE."), fontsize=8.5, color=INK2)
 fig.tight_layout(rect=(0, 0, 1, 0.9))
 fig.savefig(HERE / f"focus_ols_halves{SUFFIX}.png")
 print("saved", HERE / f"focus_ols_halves{SUFFIX}.png")
