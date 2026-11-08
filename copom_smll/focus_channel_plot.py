@@ -53,6 +53,9 @@ TITLE = {"real_rate": ("Ex-ante real rate (level)",
          "fwd5y5y_chg": ("5y5y forward rate, 4–8 week change",
                          "x = −(average of the 4- and 8-week change in the 5y5y forward); signal = clip(x / (2 × past std), ±1). "
                          "Rising long-forward rate → short small caps."),
+         "Final signal": ("Final aggregate long-short signal",
+                          "COPOM + GDP revisions + real rate (equal risk, tranches), halved when against the SMLL − IBOV "
+                          "3-month trend."),
          "disp_ipca": ("IPCA forecast dispersion (revisions)",
                        "x = −(4–8 week change in the cross-sectional std of next-year IPCA forecasts); "
                        "signal = clip(x / (2 × past std), ±1). Rising dispersion → short small caps.")}
@@ -74,6 +77,8 @@ ev_all = pd.read_csv(DATA / "focus_channels_events.csv", index_col=0, parse_date
 # signals as traded in aggregate3.py (e.g. "Real rate (tranches)", "GDP (tranches)", "Aggregate (3)")
 ev_agg = pd.read_csv(DATA / "aggregate3_fwd21.csv", index_col=0, parse_dates=True)
 ev_mac = pd.read_csv(DATA / "macro_channels_events.csv", index_col=0, parse_dates=True)  # macro_channels.py
+ev_agg = ev_agg.join(pd.read_csv(DATA / "final_signal_fwd21.csv", index_col=0, parse_dates=True)[["Final signal"]],
+                     how="outer")  # final_signal.py
 for feat in sys.argv[1:] or ["real_rate", "disp_ipca"]:
     src = ev_all if feat in ev_all.columns else ev_mac if feat in ev_mac.columns else ev_agg
     ev = src[[feat, "fwd21"]].dropna()
@@ -136,7 +141,7 @@ for feat in sys.argv[1:] or ["real_rate", "disp_ipca"]:
     fig.legend([Patch(color=ORANGE), Patch(color=AQUA)], ["Short small caps (< 0)", "Long small caps (> 0)"],
                loc="upper left", bbox_to_anchor=(0.045, 0.905), frameon=False, fontsize=8.5, ncol=2, labelcolor=INK2)
     t, sub = TITLE.get(feat, (feat, ""))
-    fig.suptitle(f"Focus: {t} vs. next 21-session small-cap relative return", x=0.05, ha="left",
+    fig.suptitle(f"{t} vs. next 21-session small-cap relative return", x=0.05, ha="left",
                  fontsize=13, fontweight="bold", y=0.985)
     fig.text(0.05, 0.925, sub + "\nWeekly from Monday close; overlapping windows, Newey-West (5 lags); "
              "error bars ±1 SE × √(21/5).", fontsize=8, color=INK2)
