@@ -18,7 +18,7 @@ Changes are scaled by 2 x their expanding past std; the level by 3 x its rolling
 Tests: fwd 21-session SMLL-IBOV return from the Monday close (overlapping weekly windows,
 Newey-West 5 lags), full sample and halves; next-week return (plain OLS); correlations with
 the existing signals (COPOM, GDP, real rate, Fed, Focus IPCA dispersion) and the t-stat after
-controlling for the current core (GDP + real rate, both in tranches).
+controlling for the core (COPOM + GDP + real rate, the latter two in tranches).
 """
 from pathlib import Path
 
@@ -148,8 +148,8 @@ for c in FEATS:
     for o in ("COPOM", "GDP", "RealRate", "Fed", "disp_ipca"):
         out[f"corr_{o}"] = e[c].corr(e[o])
     out["autocorr_4w"] = sig[c].autocorr(4)
-    j = e.dropna(subset=["GDP", "RealRate"])
-    out["t_vs_core"] = nw_ols(j["fwd21"] * 100, j[[c, "GDP", "RealRate"]]).tvalues[c]
+    j = e.dropna(subset=["COPOM", "GDP", "RealRate"])
+    out["t_vs_core"] = nw_ols(j["fwd21"] * 100, j[[c, "COPOM", "GDP", "RealRate"]]).tvalues[c]
     res.append(out)
 st = pd.DataFrame(res).set_index("feature")
 st.to_csv(DATA / "macro_channels_stats.csv", float_format="%.4f")
@@ -186,7 +186,7 @@ style(ax)
 ypos = np.arange(len(FEATS))[::-1]
 for col, colr, mk, lab in (("t_full", INK, "o", "Full sample"), ("t_H1", BLUE, "s", "First half"),
                            ("t_H2", ORANGE, "D", "Second half"),
-                           ("t_vs_core", VIOLET, "^", "Full, controlling for GDP + real rate")):
+                           ("t_vs_core", VIOLET, "^", "Full, controlling for COPOM + GDP + real rate")):
     ax.scatter(st.loc[FEATS, col], ypos, s=46 if col == "t_full" else 30, color=colr, marker=mk, zorder=3, label=lab)
 for x0 in (-1.96, 1.96):
     ax.axvline(x0, color=MUTED, lw=1, ls="--")

@@ -3,6 +3,7 @@ Download data for the macro channels.
 
   credit_default  BCB SGS 21083  default rate, business (PJ) credit, % (monthly, from Mar 2011)
   hh_dsr          BCB SGS 29034  household debt-service ratio, % of income (monthly, from Mar 2005)
+  ipca12_realized BCB SGS 13522  realized IPCA, 12-month % (monthly; IBGE releases ~10 days after month end)
   epu             policyuncertainty.com Brazil news-based EPU index (monthly)
   dxy             US dollar index, Yahoo Finance DX-Y.NYB (daily)
   embi            EMBI+ Brazil spread, bp, Ipeadata JPM366_EMBI366 (daily; series discontinued Jul 2024)
@@ -20,7 +21,7 @@ import pandas as pd
 import requests
 
 DATA = Path(__file__).parent / "data"
-LAG = {"credit_default": 45, "hh_dsr": 75, "epu": 10}
+LAG = {"credit_default": 45, "hh_dsr": 75, "epu": 10, "ipca12_realized": 12}
 
 
 def get(url, **kw):
@@ -43,7 +44,18 @@ def monthly(df, name):
 
 
 def sgs(code, name):
-    d = pd.DataFrame(get(f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados?formato=json").json())
+    # the SGS API caps one request at 10 years, so download in chunks from 2000
+    parts = []
+    for y0 in range(2000, pd.Timestamp.today().year + 1, 10):
+        url = (f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados?formato=json"
+               f"&dataInicial=01/01/{y0}&dataFinal=31/12/{y0 + 9}")
+        try:
+            r = get(url)
+        except Exception:
+            continue  # no data in this window (404)
+        if r.text.strip().startswith("["):
+            parts.append(pd.DataFrame(r.json()))
+    d = pd.concat(parts).drop_duplicates("data")
     d["date"] = pd.to_datetime(d["data"], dayfirst=True)
     d["value"] = pd.to_numeric(d["valor"])
     monthly(d, name)
@@ -52,6 +64,7 @@ def sgs(code, name):
 if __name__ == "__main__":
     sgs(21083, "credit_default")
     sgs(29034, "hh_dsr")
+    sgs(13522, "ipca12_realized")
     x = pd.read_excel(io.BytesIO(get("https://www.policyuncertainty.com/media/Brazil_Policy_Uncertainty_Data.xlsx",
                                      headers={"User-Agent": "Mozilla/5.0"}).content))
     x = x[pd.to_numeric(x["year"], errors="coerce").notna()]

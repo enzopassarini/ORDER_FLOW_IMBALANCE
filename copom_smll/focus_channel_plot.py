@@ -32,6 +32,12 @@ TITLE = {"real_rate": ("Ex-ante real rate (level)",
          "embi_trend": ("EMBI+ Brazil spread, 3-month change (data end Jul 2024)",
                         "x = −(EMBI+ Brazil spread − its value 63 sessions earlier), bp; signal = clip(x / (2 × past std), ±1). "
                         "Widening spreads → short small caps."),
+         "nominal_exp_r5": ("Nominal rate: expected Selic 12m ahead vs. rolling 5-year mean",
+                            "x = −(Focus expected Selic 12 months ahead) minus its rolling 5-year mean; "
+                            "signal = clip(x / (3 × rolling 5y std), ±1). High nominal rate → short small caps."),
+         "infl_exp_r5": ("Inflation: 12m expected IPCA vs. rolling 5-year mean",
+                         "x = −(Focus 12-month-ahead IPCA expectation) minus its rolling 5-year mean; "
+                         "signal = clip(x / (3 × rolling 5y std), ±1). High expected inflation → short small caps."),
          "disp_ipca": ("IPCA forecast dispersion (revisions)",
                        "x = −(4–8 week change in the cross-sectional std of next-year IPCA forecasts); "
                        "signal = clip(x / (2 × past std), ±1). Rising dispersion → short small caps.")}

@@ -77,8 +77,18 @@ frac = pd.Series((idx.dayofyear / 365.25).to_numpy(), index=idx)  # 12m ahead si
 selic12 = (1 - frac) * at(selic, 0).reindex(idx) + frac * at(selic, 1).reindex(idx)
 raw["real_rate"] = -(selic12 - ipca12.reindex(idx))
 raw["real_rate_r5"] = raw["real_rate"]  # same feature, rolling 5-year baseline and 3-sigma scale (see below)
+# decomposition of the real rate (same rolling 5y / 3-sigma construction), + = long small caps
+raw["nominal_exp_r5"] = -selic12                                   # expected Selic 12m ahead (Focus)
+cop = pd.read_csv(DATA / "copom_decisions.csv", parse_dates=["date"]).sort_values("date")
+raw["selic_now_r5"] = -pd.Series([cop.loc[cop["date"] < d, "selic_meta"].iloc[-1] if (cop["date"] < d).any()
+                                  else np.nan for d in idx], index=idx)  # current Selic target
+raw["infl_exp_r5"] = -ipca12.reindex(idx)                          # 12m expected IPCA (Focus)
+_ir = pd.read_csv(DATA / "macro_ipca12_realized.csv", parse_dates=["date", "avail"]).sort_values("avail")
+_ir = pd.Series(_ir["value"].to_numpy(), index=_ir["avail"]).groupby(level=0).last()
+raw["infl_real_r5"] = -_ir.reindex(_ir.index.union(idx)).ffill().reindex(idx)  # realized 12m IPCA, once released
 raw["gdp_rev"] = rev48(gdp, 1).reindex(idx)
 LEVEL = {"deanchor_level", "real_rate"}
+R5 = {"real_rate_r5", "nominal_exp_r5", "selic_now_r5", "infl_exp_r5", "infl_real_r5"}
 FEATS = [c for c in raw.columns]
 LABEL = {"fiscal_primary": "1a Fiscal: primary balance revisions", "fiscal_debt": "1b Fiscal: net debt revisions",
          "disp_gdp": "2a Dispersion: GDP forecasts", "disp_ipca": "2b Dispersion: IPCA forecasts",
@@ -86,12 +96,16 @@ LABEL = {"fiscal_primary": "1a Fiscal: primary balance revisions", "fiscal_debt"
          "deanchor_chg": "3b De-anchoring: IPCA 2–3y revisions",
          "selic_rev": "4 Selic expectation revisions (4w)", "real_rate": "5 Ex-ante real rate (level)",
          "real_rate_r5": "5' Real rate vs. rolling 5y mean (3σ)",
+         "nominal_exp_r5": "6a Nominal: expected Selic 12m vs. 5y mean",
+         "selic_now_r5": "6b Nominal: current Selic target vs. 5y mean",
+         "infl_exp_r5": "7a Inflation: 12m expected IPCA vs. 5y mean",
+         "infl_real_r5": "7b Inflation: realized 12m IPCA vs. 5y mean",
          "gdp_rev": "ref. GDP revisions"}
 
 sig = pd.DataFrame(index=idx)
 for c in FEATS:
     x = raw[c]
-    if c == "real_rate_r5":
+    if c in R5:
         # rolling 5-year baseline instead of the expanding one, which stayed anchored to the very high
         # real rates of the early 2000s and left the signal at +1 for 30% of weeks; 3-sigma scale
         w = 5 * 52
@@ -166,6 +180,14 @@ print("\nSignal correlation matrix (weekly):")
 cm = ev[FEATS + ["copom"]].corr()
 cm.to_csv(DATA / "focus_channels_corr.csv", float_format="%.3f")
 print(cm.round(2).to_string())
+
+# real-rate decomposition: which component carries the information?
+for cols in (["real_rate_r5"], ["nominal_exp_r5"], ["infl_exp_r5"], ["nominal_exp_r5", "infl_exp_r5"],
+             ["real_rate_r5", "nominal_exp_r5"], ["real_rate_r5", "infl_exp_r5"], ["selic_now_r5", "infl_real_r5"],
+             ["nominal_exp_r5", "copom"], ["real_rate_r5", "copom"]):
+    d_ = ev[cols + ["fwd21"]].dropna()
+    m = nw_ols(d_["fwd21"] * 100, d_[cols])
+    print("decomp", cols, {k: round(v, 2) for k, v in m.tvalues.items() if k != "const"}, f"n={len(d_)}")
 
 # selic_rev vs COPOM horse race
 hr = ev[["selic_rev", "copom", "fwd21"]].dropna()

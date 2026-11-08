@@ -7,7 +7,7 @@ Signal (weekly, Friday close): -(EMBI+ Brazil spread change over 63 sessions), s
 the weekly version is shown for comparison. Backtest ends 30 Jul 2024.
 
 Also: predictive t-stat and Sharpe by 5-year block, and the combination with the current
-core (GDP + real rate, equal risk) over the same dates.
+core (COPOM + GDP + real rate, equal risk) over the same dates.
 """
 from pathlib import Path
 
@@ -37,11 +37,11 @@ def daily(s):
 
 
 pos = pd.DataFrame({"EMBI weekly": daily(sig), "EMBI 4 tranches": daily(sig.rolling(4).mean()),
-                    "Core (GDP + real rate)": core["GDP + Real rate"]})
+                    "Core (COPOM + GDP + real rate)": core["Aggregate (3)"]})
 pos = pos[(pos.index <= END + pd.Timedelta(days=1))].dropna(subset=["EMBI 4 tranches"])
 sp = spread.loc[pos.index]
 ret = pos.mul(sp, axis=0)
-both = ret[["EMBI 4 tranches", "Core (GDP + real rate)"]].dropna()
+both = ret[["EMBI 4 tranches", "Core (COPOM + GDP + real rate)"]].dropna()
 vol = both.expanding(min_periods=252).std().shift(1)
 inv = 1 / vol
 w = inv.div(inv.sum(axis=1), axis=0).fillna(0.5)
@@ -57,14 +57,14 @@ def perf(r):
             "Sharpe": r.mean() / r.std() * np.sqrt(252), "MaxDD": (eq / eq.cummax() - 1).min()}
 
 
-S = ["EMBI weekly", "EMBI 4 tranches", "Core (GDP + real rate)", "Core + EMBI"]
+S = ["EMBI weekly", "EMBI 4 tranches", "Core (COPOM + GDP + real rate)", "Core + EMBI"]
 tab = pd.DataFrame({k: perf(ret[k]) for k in S}).T
 common = ret[S].dropna()
 tab["Sharpe (common 2007–24)"] = [perf(common[k])["Sharpe"] for k in S]
 tab.to_csv(DATA / "embi_backtest_stats.csv")
 pd.options.display.width = 200
 print(tab.to_string())
-print(f"\ncorr(EMBI tranches, core) daily returns: {common['EMBI 4 tranches'].corr(common['Core (GDP + real rate)']):.2f}")
+print(f"\ncorr(EMBI tranches, core) daily returns: {common['EMBI 4 tranches'].corr(common['Core (COPOM + GDP + real rate)']):.2f}")
 
 blocks = [("2005", "2009"), ("2010", "2014"), ("2015", "2019"), ("2020", "2024")]
 e = ev[["embi_trend", "fwd21"]].dropna()
@@ -75,7 +75,7 @@ for a, b in blocks:
     r_ = ret.loc[a:b]
     br.append({"period": f"{a}–{b}", "n_weeks": len(p), "slope": m.params["embi_trend"], "t_NW": m.tvalues["embi_trend"],
                "Sharpe EMBI (tranches)": perf(r_["EMBI 4 tranches"])["Sharpe"],
-               "Sharpe core": perf(r_["Core (GDP + real rate)"])["Sharpe"] if r_["Core (GDP + real rate)"].notna().sum() > 60 else np.nan,
+               "Sharpe core": perf(r_["Core (COPOM + GDP + real rate)"])["Sharpe"] if r_["Core (COPOM + GDP + real rate)"].notna().sum() > 60 else np.nan,
                "Sharpe core + EMBI": perf(r_["Core + EMBI"])["Sharpe"] if r_["Core + EMBI"].notna().sum() > 60 else np.nan})
 br = pd.DataFrame(br).set_index("period")
 br.to_csv(DATA / "embi_by_period.csv", float_format="%.3f")
@@ -88,7 +88,7 @@ print("Sharpe excluding 2008-09:", {k: round(perf(r_ex[k])["Sharpe"], 2) for k i
 
 # --- plot ------------------------------------------------------------------------------------
 INK, INK2, MUTED, GRID, SURF = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1", "#fcfcfb"
-COL = {"EMBI weekly": "#9b9a95", "EMBI 4 tranches": "#6250d6", "Core (GDP + real rate)": "#1baf7a", "Core + EMBI": INK}
+COL = {"EMBI weekly": "#9b9a95", "EMBI 4 tranches": "#6250d6", "Core (COPOM + GDP + real rate)": "#1baf7a", "Core + EMBI": INK}
 plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "text.color": INK, "axes.labelcolor": INK2,
                      "xtick.color": INK2, "ytick.color": INK2, "axes.edgecolor": GRID,
                      "figure.facecolor": SURF, "axes.facecolor": SURF})
@@ -145,7 +145,7 @@ axb.legend(loc="upper center", bbox_to_anchor=(0.5, -0.04), frameon=False, fonts
 fig.suptitle("EMBI+ Brazil spread trend: backtest to Jul 2024 (data end) and combination with the core",
              x=0.05, ha="left", fontsize=13, fontweight="bold", y=0.975)
 fig.text(0.05, 0.925, "Signal = −(3-month change of EMBI+ Brazil spread) / (2 × past std), clipped ±1; 4 staggered "
-         "21-day tranches from Monday close.\nCore = GDP revisions + real rate (tranches), equal risk; Core + EMBI = "
+         "21-day tranches from Monday close.\nCore = COPOM + GDP revisions + real rate (tranches), equal risk; Core + EMBI = "
          "equal-risk mix. No costs. Sharpes in the legend use each strategy's own start (EMBI 2005, core 2007).",
          fontsize=8.5, color=INK2)
 fig.subplots_adjust(left=0.07, right=0.97, top=0.87, bottom=0.07)
