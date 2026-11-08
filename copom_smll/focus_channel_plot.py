@@ -20,6 +20,9 @@ H, NQ, NW_LAGS = 21, 10, 5
 TITLE = {"real_rate": ("Ex-ante real rate (level)",
                        "x = −(expected Selic 12m ahead − 12m expected IPCA), demeaned vs. past weeks; "
                        "signal = clip(x / (2 × past std), ±1). High real rate → short small caps."),
+         "real_rate_r5": ("Ex-ante real rate vs. rolling 5-year mean",
+                          "x = −(expected Selic 12m ahead − 12m expected IPCA) minus its rolling 5-year mean (past weeks); "
+                          "signal = clip(x / (3 × rolling 5y std), ±1). High real rate → short small caps."),
          "disp_ipca": ("IPCA forecast dispersion (revisions)",
                        "x = −(4–8 week change in the cross-sectional std of next-year IPCA forecasts); "
                        "signal = clip(x / (2 × past std), ±1). Rising dispersion → short small caps.")}

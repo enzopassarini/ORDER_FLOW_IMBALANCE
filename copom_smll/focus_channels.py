@@ -76,6 +76,7 @@ raw["selic_rev"] = -(at(selic, 1) - at(selic, 1, 4)).reindex(idx)
 frac = pd.Series((idx.dayofyear / 365.25).to_numpy(), index=idx)  # 12m ahead sits this far between end-Y0 and end-Y1
 selic12 = (1 - frac) * at(selic, 0).reindex(idx) + frac * at(selic, 1).reindex(idx)
 raw["real_rate"] = -(selic12 - ipca12.reindex(idx))
+raw["real_rate_r5"] = raw["real_rate"]  # same feature, rolling 5-year baseline and 3-sigma scale (see below)
 raw["gdp_rev"] = rev48(gdp, 1).reindex(idx)
 LEVEL = {"deanchor_level", "real_rate"}
 FEATS = [c for c in raw.columns]
@@ -84,11 +85,19 @@ LABEL = {"fiscal_primary": "1a Fiscal: primary balance revisions", "fiscal_debt"
          "deanchor_level": "3a De-anchoring: IPCA 2–3y − target (level)",
          "deanchor_chg": "3b De-anchoring: IPCA 2–3y revisions",
          "selic_rev": "4 Selic expectation revisions (4w)", "real_rate": "5 Ex-ante real rate (level)",
+         "real_rate_r5": "5' Real rate vs. rolling 5y mean (3σ)",
          "gdp_rev": "ref. GDP revisions"}
 
 sig = pd.DataFrame(index=idx)
 for c in FEATS:
     x = raw[c]
+    if c == "real_rate_r5":
+        # rolling 5-year baseline instead of the expanding one, which stayed anchored to the very high
+        # real rates of the early 2000s and left the signal at +1 for 30% of weeks; 3-sigma scale
+        w = 5 * 52
+        x = x - x.rolling(w, min_periods=w // 2).mean().shift(1)
+        sig[c] = (x / (3 * x.rolling(w, min_periods=w // 2).std().shift(1))).clip(-1, 1)
+        continue
     if c in LEVEL:
         x = x - x.expanding(min_periods=52).mean().shift(1)
     sig[c] = (x / (2 * x.expanding(min_periods=52).std().shift(1))).clip(-1, 1)
