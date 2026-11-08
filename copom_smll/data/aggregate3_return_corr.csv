@@ -1,4 +1,4 @@
-,COPOM,GDP,Real rate
-COPOM,1.000,0.362,0.521
-GDP,0.362,1.000,0.195
-Real rate,0.521,0.195,1.000
+,COPOM,GDP (tranches),Real rate (tranches)
+COPOM,1.000,0.363,0.499
+GDP (tranches),0.363,1.000,0.203
+Real rate (tranches),0.499,0.203,1.000

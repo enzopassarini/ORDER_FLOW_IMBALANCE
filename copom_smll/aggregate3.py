@@ -4,7 +4,8 @@ Compare three SMLL - IBOV signals and their equal-risk aggregate (no costs).
   COPOM      linear COPOM position, -clip(dSelic, +-100 bp)/100, held decision to decision
   GDP        Focus next-year GDP revisions, clip(rev, +-0.75 pp)/0.75, 4 staggered 21-day tranches
   Real rate  Focus ex-ante real rate vs. its rolling 5-year mean, clip(x / 3 sigma, +-1),
-             set weekly at the Monday close after each Friday survey
+             4 staggered 21-day tranches: each Friday survey opens signal/4 at the Monday close,
+             held 4 weeks, so position = mean of the last 4 weekly signals
 
 Aggregate position = sum_i w_i,t * position_i,t with sum w = 1 (stays in [-1, 1]);
 w_i proportional to 1 / sigma_i, sigma_i = vol of strategy i's daily returns on all days
@@ -29,13 +30,14 @@ spread = (px["SMLL"].pct_change() - px["IBOV"].pct_change()).dropna()
 copom = pd.read_csv(DATA / "backtest_daily.csv", index_col=0, parse_dates=True)["position"]
 gdp = pd.read_csv(DATA / "focus_tranches_daily.csv", index_col=0, parse_dates=True)["4 tranches x 21d"]
 rr_w = pd.read_csv(DATA / "focus_channels_signal.csv", index_col=0, parse_dates=True)["real_rate_r5"].dropna()
+rr_w = rr_w.rolling(4).mean().dropna()  # 4 tranches x 21 days
 rr = pd.Series(np.nan, index=spread.index)
 for d, v in rr_w.items():
     i0 = px.index.searchsorted(d, side="right")
     if i0 < len(px):
         rr.loc[rr.index > px.index[i0]] = v
 
-pos = pd.DataFrame({"COPOM": copom, "GDP": gdp, "Real rate": rr}).dropna()
+pos = pd.DataFrame({"COPOM": copom, "GDP (tranches)": gdp, "Real rate (tranches)": rr}).dropna()
 sp = spread.loc[pos.index]
 ret = pos.mul(sp, axis=0)
 
@@ -47,8 +49,8 @@ def aggregate(cols):
     return (w * pos[cols]).sum(axis=1), w
 
 
-pos["Aggregate (3)"], w3 = aggregate(["COPOM", "GDP", "Real rate"])
-pos["GDP + Real rate"], _ = aggregate(["GDP", "Real rate"])
+pos["Aggregate (3)"], w3 = aggregate(["COPOM", "GDP (tranches)", "Real rate (tranches)"])
+pos["GDP + Real rate"], _ = aggregate(["GDP (tranches)", "Real rate (tranches)"])
 ret = pos.mul(sp, axis=0)
 pos.join(ret, rsuffix=" ret").join(w3.add_prefix("w ")).to_csv(DATA / "aggregate3_daily.csv")
 
@@ -60,13 +62,13 @@ def perf(r):
 
 
 mid = len(ret) // 2
-STRATS = ["COPOM", "GDP", "Real rate", "GDP + Real rate", "Aggregate (3)"]
+STRATS = ["COPOM", "GDP (tranches)", "Real rate (tranches)", "GDP + Real rate", "Aggregate (3)"]
 tab = pd.DataFrame({k: {**perf(ret[k]), "Sharpe H1": perf(ret[k].iloc[:mid])["Sharpe"],
                         "Sharpe H2": perf(ret[k].iloc[mid:])["Sharpe"], "avg |pos|": pos[k].abs().mean()}
                     for k in STRATS}).T
 tab.to_csv(DATA / "aggregate3_stats.csv", float_format="%.4f")
-cor = ret[["COPOM", "GDP", "Real rate"]].corr()
-pcor = pos[["COPOM", "GDP", "Real rate"]].corr()
+cor = ret[["COPOM", "GDP (tranches)", "Real rate (tranches)"]].corr()
+pcor = pos[["COPOM", "GDP (tranches)", "Real rate (tranches)"]].corr()
 cor.to_csv(DATA / "aggregate3_return_corr.csv", float_format="%.3f")
 pd.options.display.width = 200
 print(f"{ret.index[0].date()} -> {ret.index[-1].date()}, split {ret.index[mid].date()}")
@@ -105,7 +107,7 @@ print("\nNW t-stats, fwd 21-session:\n", st.pivot(index="signal", columns="sampl
 
 # --- plotting ---------------------------------------------------------------------------------
 INK, INK2, MUTED, GRID, SURF = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1", "#fcfcfb"
-COL = {"COPOM": "#2a78d6", "GDP": "#1baf7a", "Real rate": "#eb6834", "GDP + Real rate": "#9b9a95",
+COL = {"COPOM": "#2a78d6", "GDP (tranches)": "#1baf7a", "Real rate (tranches)": "#eb6834", "GDP + Real rate": "#9b9a95",
        "Aggregate (3)": INK}
 AQUA, ORANGE = "#1baf7a", "#eb6834"
 plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "text.color": INK, "axes.labelcolor": INK2,
@@ -143,7 +145,7 @@ ax.set_ylabel("Growth of 1")
 ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}×"))
 ax.legend(loc="upper left", frameon=False, fontsize=8, labelcolor=INK2)
 ax.annotate("half split", (ret.index[mid], 1), xytext=(4, 4), textcoords="offset points", fontsize=8, color=MUTED)
-for k in ["COPOM", "GDP", "Real rate"]:
+for k in ["COPOM", "GDP (tranches)", "Real rate (tranches)"]:
     axp.plot(pos.index, pos[k], color=COL[k], lw=0.8, alpha=0.65, drawstyle="steps-post", label=k)
 axp.fill_between(pos.index, 0, pos["Aggregate (3)"], color=INK, alpha=0.15, lw=0, step="post")
 axp.plot(pos.index, pos["Aggregate (3)"], color=INK, lw=1.4, drawstyle="steps-post", label="Aggregate (3)")
@@ -157,13 +159,13 @@ for k in STRATS:
     axd.plot(dd.index, dd[k], color=COL[k], lw=1.4 if k == "Aggregate (3)" else 0.7,
              ls="--" if k == "GDP + Real rate" else "-")
 axd.set_ylabel("Drawdown (%)")
-fig.suptitle("COPOM, GDP revisions and real rate: individual vs. aggregate (SMLL vs. IBOV, no costs)",
+fig.suptitle("COPOM, GDP and real rate (tranches) vs. aggregate: SMLL − IBOV, no costs",
              x=0.06, ha="left", fontsize=13, fontweight="bold", y=0.975)
 c_ = cor
 ax.set_title(f"Aggregate = Σ wᵢ · positionᵢ, wᵢ ∝ 1/past vol (avg weights: COPOM {w3['COPOM'].mean():.2f}, "
-             f"GDP {w3['GDP'].mean():.2f}, real rate {w3['Real rate'].mean():.2f}).\nDaily return correlations: "
-             f"COPOM–GDP {c_.loc['COPOM', 'GDP']:+.2f}, COPOM–real rate {c_.loc['COPOM', 'Real rate']:+.2f}, "
-             f"GDP–real rate {c_.loc['GDP', 'Real rate']:+.2f}.", loc="left", fontsize=8.5, color=INK2, pad=10)
+             f"GDP {w3['GDP (tranches)'].mean():.2f}, real rate {w3['Real rate (tranches)'].mean():.2f}).\nDaily return correlations: "
+             f"COPOM–GDP {c_.loc['COPOM', 'GDP (tranches)']:+.2f}, COPOM–real rate {c_.loc['COPOM', 'Real rate (tranches)']:+.2f}, "
+             f"GDP–real rate {c_.loc['GDP (tranches)', 'Real rate (tranches)']:+.2f}.", loc="left", fontsize=8.5, color=INK2, pad=10)
 fig.text(0.06, 0.01, "Return = position × (r_SMLL − r_IBOV), daily-rebalanced dollar-neutral spread. "
          "Sources: BCB Focus, BCB COPOM, B3.", fontsize=7.5, color=MUTED)
 fig.subplots_adjust(left=0.1, right=0.93, top=0.89, bottom=0.06)
@@ -176,7 +178,7 @@ fig, axes = plt.subplots(2, 3, figsize=(14, 8.6), dpi=200, gridspec_kw={"height_
 K = "Aggregate (3)"
 for j, (nm, e) in enumerate(samples.items()):
     s = st[(st["sample"] == nm) & (st["signal"] == K)].iloc[0]
-    comp = {k: st[(st["sample"] == nm) & (st["signal"] == k)].iloc[0].t_NW for k in ["COPOM", "GDP", "Real rate"]}
+    comp = {k: st[(st["sample"] == nm) & (st["signal"] == k)].iloc[0].t_NW for k in ["COPOM", "GDP (tranches)", "Real rate (tranches)"]}
     x, y = e[K].to_numpy(), e["fwd21"].to_numpy() * 100
     ax = axes[0, j]
     style(ax)
@@ -191,8 +193,8 @@ for j, (nm, e) in enumerate(samples.items()):
     nz = x != 0
     hit = (np.sign(x[nz]) == np.sign(y[nz])).mean()
     ax.set_title(f"{nm}\nn={int(s.n)}  slope {s.slope:+.2f} pp  NW t {s.t_NW:+.2f}  R² {s.R2:.3f}  hit {hit:.0%}\n"
-                 f"components NW t: COPOM {comp['COPOM']:+.2f}, GDP {comp['GDP']:+.2f}, real rate "
-                 f"{comp['Real rate']:+.2f}", loc="left", fontsize=8.5, color=INK2)
+                 f"components NW t: COPOM {comp['COPOM']:+.2f}, GDP {comp['GDP (tranches)']:+.2f}, real rate "
+                 f"{comp['Real rate (tranches)']:+.2f}", loc="left", fontsize=8.5, color=INK2)
     ax.set_xlabel("Aggregate signal  ← short small caps · long small caps →")
     if j == 0:
         ax.set_ylabel("SMLL − IBOV fwd 21-session return (pp)")
@@ -220,7 +222,7 @@ for j, (nm, e) in enumerate(samples.items()):
         ax.set_ylabel("Mean fwd 21-session return (pp)")
     ax.set_title(f"Deciles: D10 − D1 = {g.loc[NQ, 'mean'] - g.loc[1, 'mean']:+.2f} pp", loc="left",
                  fontsize=8.5, color=INK2)
-fig.suptitle("Aggregate of COPOM + GDP revisions + real rate vs. next 21-session small-cap relative return",
+fig.suptitle("Aggregate of COPOM + GDP revisions + real rate (tranches) vs. next 21-session small-cap relative return",
              x=0.05, ha="left", fontsize=13, fontweight="bold", y=0.985)
 fig.text(0.05, 0.935, "Equal-risk weights from past volatility; weekly, as held from Monday close. Overlapping "
          "windows: Newey-West (5 lags); error bars ±1 SE × √(21/5).", fontsize=8.5, color=INK2)

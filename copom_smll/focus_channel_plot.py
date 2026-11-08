@@ -23,6 +23,12 @@ TITLE = {"real_rate": ("Ex-ante real rate (level)",
          "real_rate_r5": ("Ex-ante real rate vs. rolling 5-year mean",
                           "x = −(expected Selic 12m ahead − 12m expected IPCA) minus its rolling 5-year mean (past weeks); "
                           "signal = clip(x / (3 × rolling 5y std), ±1). High real rate → short small caps."),
+         "Real rate (tranches)": ("Ex-ante real rate, 4 tranches × 21 days",
+                                  "Weekly signal = clip((x − rolling 5y mean) / (3 × rolling 5y std), ±1), "
+                                  "x = −(expected Selic 12m − 12m expected IPCA); position = mean of the last 4 weekly signals."),
+         "GDP + Real rate": ("GDP revisions + real rate (both in tranches), equal-risk aggregate",
+                            "Position = w_GDP · GDP(tranches) + w_RR · real rate(tranches), weights ∝ 1/past vol of each "
+                            "strategy (sum to 1)."),
          "disp_ipca": ("IPCA forecast dispersion (revisions)",
                        "x = −(4–8 week change in the cross-sectional std of next-year IPCA forecasts); "
                        "signal = clip(x / (2 × past std), ±1). Rising dispersion → short small caps.")}
@@ -41,8 +47,11 @@ def style(a, yonly=False):
 
 
 ev_all = pd.read_csv(DATA / "focus_channels_events.csv", index_col=0, parse_dates=True)
+# signals as traded in aggregate3.py (e.g. "Real rate (tranches)", "GDP (tranches)", "Aggregate (3)")
+ev_agg = pd.read_csv(DATA / "aggregate3_fwd21.csv", index_col=0, parse_dates=True)
 for feat in sys.argv[1:] or ["real_rate", "disp_ipca"]:
-    ev = ev_all[[feat, "fwd21"]].dropna()
+    src = ev_all if feat in ev_all.columns else ev_agg
+    ev = src[[feat, "fwd21"]].dropna()
     half = len(ev) // 2
     samples = {"Full sample": ev,
                f"First half ({ev.index[0]:%b %Y} – {ev.index[half - 1]:%b %Y})": ev.iloc[:half],
@@ -96,7 +105,8 @@ for feat in sys.argv[1:] or ["real_rate", "disp_ipca"]:
             ax.set_ylabel("Mean fwd 21-session return (pp)")
         ax.set_title(f"Deciles: D10 − D1 = {g.loc[NQ, 'mean'] - g.loc[1, 'mean']:+.2f} pp", loc="left",
                      fontsize=8.5, color=INK2)
-    pd.concat(rows).drop(columns="sd").to_csv(DATA / f"focus_channel_{feat}_deciles.csv", float_format="%.4f")
+    slug = feat.lower().replace(" ", "_").replace("(", "").replace(")", "")
+    pd.concat(rows).drop(columns="sd").to_csv(DATA / f"focus_channel_{slug}_deciles.csv", float_format="%.4f")
     from matplotlib.patches import Patch
     fig.legend([Patch(color=ORANGE), Patch(color=AQUA)], ["Short small caps (< 0)", "Long small caps (> 0)"],
                loc="upper left", bbox_to_anchor=(0.045, 0.905), frameon=False, fontsize=8.5, ncol=2, labelcolor=INK2)
@@ -106,7 +116,7 @@ for feat in sys.argv[1:] or ["real_rate", "disp_ipca"]:
     fig.text(0.05, 0.925, sub + "\nWeekly from Monday close; overlapping windows, Newey-West (5 lags); "
              "error bars ±1 SE × √(21/5).", fontsize=8, color=INK2)
     fig.tight_layout(rect=(0, 0, 1, 0.88))
-    out = HERE / f"focus_channel_{feat}.png"
+    out = HERE / f"focus_channel_{feat.lower().replace(' ', '_').replace('(', '').replace(')', '')}.png"
     fig.savefig(out)
     plt.close(fig)
     print("saved", out)
