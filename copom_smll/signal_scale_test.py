@@ -1,8 +1,8 @@
 """
-Effect of doubling the final signal (clipped to [-1, 1]) on position sizes and performance.
+Effect of scaling the final signal 1x-4x (clipped to [-1, 1]) on position sizes and performance.
 
   1x: q_t = final signal
-  2x: clip(2 * q_t, -1, 1)
+  kx: clip(k * q_t, -1, 1), k = 2, 3, 4
 Size metrics: average long size (mean q when q > 0), average short size (mean |q| when q < 0),
 share of days long / short, share of days at the +-1 clip.
 Performance after 5 bp costs, weekly rebalancing with no-trade band:
@@ -18,9 +18,10 @@ with contextlib.redirect_stdout(io.StringIO()):
     import long_only_costs as lo
     import ls_costs as ls
 
+MULTS = (1, 2, 3, 4)
 q_full = pd.read_csv(ls.DATA / "final_core_daily.csv", index_col=0, parse_dates=True)["filtered_position"]
 rows, keep = [], {}
-for mult in (1, 2):
+for mult in MULTS:
     q = (mult * q_full).clip(-1, 1)
     size = {"Avg long size": q[q > 0].mean(), "Avg short size": -q[q < 0].mean(), "Avg |signal|": q.abs().mean(),
             "Days long": (q > 0).mean(), "Days short": (q < 0).mean(), "Days at ±1": (q.abs() >= 1).mean(),
@@ -47,8 +48,7 @@ print(tab.to_string())
 import matplotlib.pyplot as plt
 
 INK, INK2, MUTED, GRID, SURF = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1", "#fcfcfb"
-C1, C2 = "#9b9a95", "#6250d6"
-AQUA, ORANGE = "#1baf7a", "#eb6834"
+COL = {1: "#9b9a95", 2: "#9085e9", 3: "#6250d6", 4: "#2c1f8f"}
 plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "text.color": INK, "axes.labelcolor": INK2,
                      "xtick.color": INK2, "ytick.color": INK2, "axes.edgecolor": GRID,
                      "figure.facecolor": SURF, "axes.facecolor": SURF})
@@ -61,73 +61,66 @@ def style(a):
 
 
 T = tab
-fig = plt.figure(figsize=(14, 12), dpi=200)
-gs = fig.add_gridspec(3, 2, width_ratios=[2.3, 1], height_ratios=[1.1, 1.3, 1.3], hspace=0.38, wspace=0.18)
-ax0 = fig.add_subplot(gs[0, 0])
-axh = fig.add_subplot(gs[0, 1])
-ax1 = fig.add_subplot(gs[1, :])
-ax2 = fig.add_subplot(gs[2, :])
+fig = plt.figure(figsize=(14, 13), dpi=200)
+gs = fig.add_gridspec(3, 2, width_ratios=[2.2, 1], height_ratios=[1.15, 1.3, 1.3], hspace=0.38, wspace=0.18)
+ax0, axh = fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1])
+ax1, ax2 = fig.add_subplot(gs[1, :]), fig.add_subplot(gs[2, :])
 for a in (ax0, axh, ax1, ax2):
     style(a)
-# 1) signal over time
-q1, q2 = keep[1]["q"], keep[2]["q"]
-ax0.fill_between(q2.index, 0, q2, color=C2, alpha=0.35, lw=0, step="post", label="2× (clipped to ±1)")
-ax0.plot(q1.index, q1, color=INK, lw=0.9, drawstyle="steps-post", label="1×")
-clip = q2.abs() >= 1
-ax0.fill_between(q2.index, -1.05, 1.05, where=clip, color=ORANGE, alpha=0.15, lw=0, step="post", label="2× at the ±1 cap")
+for m in MULTS[::-1]:
+    qq = keep[m]["q"]
+    ax0.plot(qq.index, qq, color=COL[m], lw=1.6 if m == 1 else 0.9, drawstyle="steps-post", label=f"{m}×",
+             zorder=5 if m == 1 else 3)
 ax0.axhline(0, color=MUTED, lw=1)
 ax0.set_ylim(-1.05, 1.05)
 ax0.set_ylabel("Signal")
-ax0.legend(loc="upper right", frameon=False, fontsize=8.5, labelcolor=INK2, ncol=3)
-ax0.set_title("Signal: 1× vs. 2× (+ = long SMLL / short IBOV)", loc="left", fontsize=10, color=INK2)
-# size metrics
-labels = ["avg long", "avg short", "avg |signal|"]
-v1 = [T.loc["Avg long size", "1x"], T.loc["Avg short size", "1x"], T.loc["Avg |signal|", "1x"]]
-v2 = [T.loc["Avg long size", "2x"], T.loc["Avg short size", "2x"], T.loc["Avg |signal|", "2x"]]
-x = np.arange(3)
-axh.bar(x - 0.18, v1, width=0.36, color=C1, label="1×", zorder=3)
-axh.bar(x + 0.18, v2, width=0.36, color=C2, label="2×", zorder=3)
-for i in range(3):
-    axh.text(i - 0.18, v1[i] + 0.01, f"{v1[i]:.2f}", ha="center", fontsize=8.5)
-    axh.text(i + 0.18, v2[i] + 0.01, f"{v2[i]:.2f}", ha="center", fontsize=8.5)
+h, l = ax0.get_legend_handles_labels()
+ax0.legend(h[::-1], l[::-1], loc="upper right", frameon=False, fontsize=8.5, labelcolor=INK2, ncol=4)
+ax0.set_title("Signal at 1×–4×, clipped to ±1 (+ = long SMLL / short IBOV)", loc="left", fontsize=10, color=INK2)
+x = np.arange(len(MULTS))
+w_ = 0.27
+for j, (row, lab) in enumerate((("Avg long size", "avg long"), ("Avg short size", "avg short"), ("Days at ±1", "days at cap"))):
+    vals = [T.loc[row, f"{m}x"] for m in MULTS]
+    axh.bar(x + (j - 1) * w_, vals, width=w_, color=["#1baf7a", "#eb6834", "#9b9a95"][j], label=lab, zorder=3)
+    for i, v in enumerate(vals):
+        axh.text(i + (j - 1) * w_, v + 0.012, f"{v:.2f}" if j < 2 else f"{v:.0%}", ha="center", fontsize=7)
 axh.set_xticks(x)
-axh.set_xticklabels(labels)
-axh.set_ylim(0, 0.55)
+axh.set_xticklabels([f"{m}×" for m in MULTS])
+axh.set_ylim(0, 1)
 axh.legend(loc="upper left", frameon=False, fontsize=8.5, labelcolor=INK2)
-axh.set_title(f"Average position size (2× at cap {T.loc['Days at ±1', '2x']:.0%} of days)", loc="left", fontsize=10,
-              color=INK2)
-# 2) long-short backtest
-for m, c, lw in ((1, C1, 1.6), (2, C2, 2.2)):
+axh.set_title("Average long / short size and share of days at the cap", loc="left", fontsize=10, color=INK2)
+for m in MULTS:
     d = keep[m]["ls"]
     eq = (1 + d["net"]).cumprod()
     k = f"{m}x"
-    ax1.plot(eq.index, eq, color=c, lw=lw,
+    ax1.plot(eq.index, eq, color=COL[m], lw=2 if m in (1, 4) else 1.5,
              label=f"{m}×: CAGR {T.loc['L/S CAGR', k]:+.1%}, vol {T.loc['L/S vol', k]:.1%}, Sharpe {T.loc['L/S Sharpe', k]:.2f} "
                    f"(H2 {T.loc['L/S Sharpe H2', k]:.2f}), max DD {T.loc['L/S MaxDD', k]:.0%}")
     ax1.annotate(f"{eq.iloc[-1]:.2f}×", (eq.index[-1], eq.iloc[-1]), xytext=(6, 0), textcoords="offset points",
-                 fontsize=9, color=c, va="center")
+                 fontsize=9, color=COL[m], va="center")
 ax1.axhline(1, color=MUTED, lw=1)
+ax1.set_yscale("log")
+ax1.set_yticks([1, 1.5, 2, 3, 4])
 ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}×"))
-ax1.legend(loc="upper left", frameon=False, fontsize=9, labelcolor=INK2)
-ax1.set_ylabel("Growth of 1")
+ax1.yaxis.set_minor_formatter(plt.NullFormatter())
+ax1.legend(loc="upper left", frameon=False, fontsize=8.5, labelcolor=INK2)
+ax1.set_ylabel("Growth of 1 (log)")
 ax1.set_title("Long-short SMLL − IBOV, unlevered (after 5 bp, weekly + band)", loc="left", fontsize=10, color=INK2)
-# 3) long-only alpha vs 50/50
-for m, c, lw in ((1, C1, 1.6), (2, C2, 2.2)):
+for m in MULTS:
     p, b = keep[m]["lo"], keep[m]["bm"]
     rel = ((1 + p["net"]).cumprod() / (1 + b["net"]).cumprod() - 1) * 100
     k = f"{m}x"
-    ax2.plot(rel.index, rel, color=c, lw=lw,
+    ax2.plot(rel.index, rel, color=COL[m], lw=2 if m in (1, 4) else 1.5,
              label=f"{m}×: CAGR {T.loc['LO CAGR', k]:.1%}, excess {T.loc['LO excess vs 50/50', k]:+.1%}/yr, "
-                   f"tracking error {T.loc['LO tracking error', k]:.1%}, IR {T.loc['LO IR', k]:.2f}, SMLL weight "
-                   f"{T.loc['LO SMLL weight range', k]}")
+                   f"TE {T.loc['LO tracking error', k]:.1%}, IR {T.loc['LO IR', k]:.2f}")
     ax2.annotate(f"{rel.iloc[-1]:+.0f}%", (rel.index[-1], rel.iloc[-1]), xytext=(6, 0), textcoords="offset points",
-                 fontsize=9, color=c, va="center")
+                 fontsize=9, color=COL[m], va="center")
 ax2.axhline(0, color=MUTED, lw=1)
-ax2.legend(loc="upper left", frameon=False, fontsize=9, labelcolor=INK2)
+ax2.legend(loc="upper left", frameon=False, fontsize=8.5, labelcolor=INK2)
 ax2.set_ylabel("Relative to 50/50 (%)")
 ax2.set_title("Long-only SMLL weight = (signal + 1) / 2: cumulative alpha vs. 50/50 (after 5 bp, weekly + 1 pp band)",
               loc="left", fontsize=10, color=INK2)
-fig.suptitle("Final signal at 1× vs. 2× (clipped to ±1)", x=0.05, ha="left", fontsize=14, fontweight="bold", y=0.975)
+fig.suptitle("Final signal scaled 1× to 4× (clipped to ±1)", x=0.05, ha="left", fontsize=14, fontweight="bold", y=0.975)
 fig.subplots_adjust(left=0.06, right=0.95, top=0.93, bottom=0.04)
 fig.savefig(ls.HERE / "signal_scale_test.png")
 print("saved")
