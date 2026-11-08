@@ -1,0 +1,16 @@
+sample,signal,n,slope,t_NW,R2
+Full sample,COPOM,1035,1.0415,2.1513,0.0197
+Full sample,GDP,1035,1.7996,2.6267,0.0202
+Full sample,Real rate,1035,1.4999,3.2801,0.0349
+Full sample,GDP + Real rate,1035,2.7211,3.8772,0.0466
+Full sample,Aggregate (3),1035,2.4939,3.5467,0.0440
+First half (Dec 2006 – Oct 2016),COPOM,517,1.7743,1.8250,0.0379
+First half (Dec 2006 – Oct 2016),GDP,517,2.0062,2.3899,0.0271
+First half (Dec 2006 – Oct 2016),Real rate,517,1.8715,2.5988,0.0399
+First half (Dec 2006 – Oct 2016),GDP + Real rate,517,3.0895,2.9910,0.0558
+First half (Dec 2006 – Oct 2016),Aggregate (3),517,3.3400,2.8691,0.0628
+Second half (Nov 2016 – Oct 2026),COPOM,518,0.5905,1.2727,0.0094
+Second half (Nov 2016 – Oct 2026),GDP,518,1.6160,1.3393,0.0137
+Second half (Nov 2016 – Oct 2026),Real rate,518,1.3882,2.3089,0.0337
+Second half (Nov 2016 – Oct 2026),GDP + Real rate,518,2.3006,2.3871,0.0354
+Second half (Nov 2016 – Oct 2026),Aggregate (3),518,1.7471,2.0907,0.0276
