@@ -29,6 +29,9 @@ TITLE = {"real_rate": ("Ex-ante real rate (level)",
          "GDP + Real rate": ("GDP revisions + real rate (both in tranches), equal-risk aggregate",
                             "Position = w_GDP · GDP(tranches) + w_RR · real rate(tranches), weights ∝ 1/past vol of each "
                             "strategy (sum to 1)."),
+         "embi_trend": ("EMBI+ Brazil spread, 3-month change (data end Jul 2024)",
+                        "x = −(EMBI+ Brazil spread − its value 63 sessions earlier), bp; signal = clip(x / (2 × past std), ±1). "
+                        "Widening spreads → short small caps."),
          "disp_ipca": ("IPCA forecast dispersion (revisions)",
                        "x = −(4–8 week change in the cross-sectional std of next-year IPCA forecasts); "
                        "signal = clip(x / (2 × past std), ±1). Rising dispersion → short small caps.")}
@@ -49,8 +52,9 @@ def style(a, yonly=False):
 ev_all = pd.read_csv(DATA / "focus_channels_events.csv", index_col=0, parse_dates=True)
 # signals as traded in aggregate3.py (e.g. "Real rate (tranches)", "GDP (tranches)", "Aggregate (3)")
 ev_agg = pd.read_csv(DATA / "aggregate3_fwd21.csv", index_col=0, parse_dates=True)
+ev_mac = pd.read_csv(DATA / "macro_channels_events.csv", index_col=0, parse_dates=True)  # macro_channels.py
 for feat in sys.argv[1:] or ["real_rate", "disp_ipca"]:
-    src = ev_all if feat in ev_all.columns else ev_agg
+    src = ev_all if feat in ev_all.columns else ev_mac if feat in ev_mac.columns else ev_agg
     ev = src[[feat, "fwd21"]].dropna()
     half = len(ev) // 2
     samples = {"Full sample": ev,
