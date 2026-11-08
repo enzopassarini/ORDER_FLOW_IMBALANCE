@@ -78,18 +78,29 @@ emb_tr = embi_d - embi_d.shift(63)
 raw["embi_trend"] = -emb_tr.reindex(emb_tr.index.union(fridays)).ffill().reindex(fridays)
 raw.loc[raw.index > embi_d.index.max() + pd.Timedelta(days=7), "embi_trend"] = np.nan
 raw["embi_level"] = -embi_f
+# local yield curve (Tesouro Direto, fetch_curve.py); steep curve / high yields -> short small caps
+s51, _ = daily_at_fridays("curve_5y1y")
+raw["curve_5y1y_r5"] = -s51
+raw["curve_5y1y_chg"] = -(((s51 - s51.shift(4)) + (s51 - s51.shift(8))) / 2)
+raw["curve_2ysel_r5"] = -daily_at_fridays("curve_2ysel")[0]
+raw["curve_y2_r5"] = -daily_at_fridays("curve_y2")[0]
 FEATS = list(raw.columns)
+R5 = {"embi_level", "curve_5y1y_r5", "curve_2ysel_r5", "curve_y2_r5"}
 LABEL = {"credit_default": "1 Credit stress: business default rate (Δ)",
          "hh_dsr": "2 Household debt-service ratio (Δ)",
          "epu": "3 Brazil policy uncertainty, EPU (Δ log)",
          "dxy_trend": "4 Dollar cycle: DXY 6–12m trend",
          "embi_trend": "5a EMBI+ Brazil, 3m change (to Jul 2024)",
-         "embi_level": "5b EMBI+ Brazil vs. 5y mean (to Jul 2024)"}
+         "embi_level": "5b EMBI+ Brazil vs. 5y mean (to Jul 2024)",
+         "curve_5y1y_r5": "6a Curve slope 5y − 1y vs. 5y mean",
+         "curve_5y1y_chg": "6b Curve slope 5y − 1y, 4–8 week change",
+         "curve_2ysel_r5": "6c Curve 2y − Selic target vs. 5y mean",
+         "curve_y2_r5": "6d 2y nominal yield vs. 5y mean"}
 
 sig = pd.DataFrame(index=fridays)
 for c in FEATS:
     x = raw[c]
-    if c == "embi_level":
+    if c in R5:
         w = 5 * 52
         x = x - x.rolling(w, min_periods=w // 2).mean().shift(1)
         sig[c] = (x / (3 * x.rolling(w, min_periods=w // 2).std().shift(1))).clip(-1, 1)
@@ -102,7 +113,8 @@ sig.to_csv(DATA / "macro_channels_signal.csv")
 spread_d = px["SMLL"].pct_change() - px["IBOV"].pct_change()
 agg = pd.read_csv(DATA / "aggregate3_daily.csv", index_col=0, parse_dates=True)
 fed_pos = pd.read_csv(DATA / "fed_backtest_daily.csv", index_col=0, parse_dates=True)["position"]
-foc = pd.read_csv(DATA / "focus_channels_signal.csv", index_col=0, parse_dates=True)["disp_ipca"]
+focs = pd.read_csv(DATA / "focus_channels_signal.csv", index_col=0, parse_dates=True)
+foc = focs["disp_ipca"]
 rows = []
 fr = [d for d in fridays if d >= px.index[0]]
 for k, d in enumerate(fr):
@@ -112,7 +124,8 @@ for k, d in enumerate(fr):
     day1 = px.index[i0 + 1]
     row = {"date": d, "COPOM": agg["COPOM"].get(day1, np.nan), "GDP": agg["GDP (tranches)"].get(day1, np.nan),
            "RealRate": agg["Real rate (tranches)"].get(day1, np.nan), "Core": agg["GDP + Real rate"].get(day1, np.nan),
-           "Fed": fed_pos.get(day1, np.nan), "disp_ipca": foc.get(d, np.nan)}
+           "Fed": fed_pos.get(day1, np.nan), "disp_ipca": foc.get(d, np.nan),
+           "focus_nominal": focs["nominal_exp_r5"].get(d, np.nan), "focus_selic_rev": focs["selic_rev"].get(d, np.nan)}
     if i0 + H < len(px):
         r = px.iloc[i0 + H] / px.iloc[i0] - 1
         row["fwd21"] = r["SMLL"] - r["IBOV"]
@@ -156,12 +169,14 @@ st.to_csv(DATA / "macro_channels_stats.csv", float_format="%.4f")
 pd.options.display.width = 260
 pd.options.display.max_columns = 40
 print(st.round(2).to_string())
-corr_cols = FEATS + ["disp_ipca", "Fed", "COPOM", "GDP", "RealRate"]
+corr_cols = FEATS + ["disp_ipca", "focus_nominal", "focus_selic_rev", "Fed", "COPOM", "GDP", "RealRate"]
 cm = ev[corr_cols].corr()
 cm.to_csv(DATA / "macro_channels_corr.csv", float_format="%.3f")
 print("\nSignal correlations (weekly):\n", cm.round(2).to_string())
 # EPU vs Focus dispersion head to head; EMBI vs Fed and DXY
-for cols in (["epu"], ["disp_ipca"], ["epu", "disp_ipca"], ["embi_trend", "dxy_trend", "Fed"],
+for cols in (["curve_5y1y_r5", "RealRate"], ["curve_5y1y_r5", "COPOM", "GDP", "RealRate"],
+             ["curve_2ysel_r5", "COPOM", "GDP", "RealRate"], ["curve_y2_r5", "focus_nominal"],
+             ["curve_5y1y_r5", "curve_y2_r5"], ["epu"], ["disp_ipca"], ["epu", "disp_ipca"], ["embi_trend", "dxy_trend", "Fed"],
              ["embi_level", "dxy_trend", "Fed"]):
     e = ev[cols + ["fwd21"]].dropna()
     m = nw_ols(e["fwd21"] * 100, e[cols])
@@ -181,7 +196,7 @@ def style(a, yonly=False):
         a.spines[s].set_visible(False)
 
 
-fig, (ax, ax2) = plt.subplots(1, 2, figsize=(13.5, 6.2), dpi=200, gridspec_kw={"width_ratios": [1.4, 1]})
+fig, (ax, ax2) = plt.subplots(1, 2, figsize=(14, 8), dpi=200, gridspec_kw={"width_ratios": [1.4, 1]})
 style(ax)
 ypos = np.arange(len(FEATS))[::-1]
 for col, colr, mk, lab in (("t_full", INK, "o", "Full sample"), ("t_H1", BLUE, "s", "First half"),
@@ -202,7 +217,8 @@ for s in ax2.spines.values():
     s.set_visible(False)
 short = {"credit_default": "credit", "hh_dsr": "hh DSR", "epu": "EPU", "dxy_trend": "DXY", "embi_trend": "EMBI Δ",
          "embi_level": "EMBI lvl", "disp_ipca": "IPCA disp", "Fed": "Fed", "COPOM": "COPOM", "GDP": "GDP",
-         "RealRate": "Real rate"}
+         "RealRate": "Real rate", "curve_5y1y_r5": "5y−1y", "curve_5y1y_chg": "5y−1y Δ",
+         "curve_2ysel_r5": "2y−Selic", "curve_y2_r5": "2y yld", "focus_nominal": "Focus Selic", "focus_selic_rev": "Selic rev"}
 im = ax2.imshow(cm.values, cmap="RdBu_r", vmin=-1, vmax=1)
 ax2.set_xticks(range(len(cm)))
 ax2.set_xticklabels([short[c] for c in cm.columns], rotation=60, ha="right", fontsize=7.5)
@@ -222,7 +238,7 @@ fig.tight_layout(rect=(0, 0, 1, 0.9))
 fig.savefig(HERE / "macro_channels_summary.png")
 plt.close(fig)
 
-fig, axes = plt.subplots(2, 3, figsize=(13, 7.4), dpi=200, sharey=True)
+fig, axes = plt.subplots(int(np.ceil(len(FEATS) / 3)), 3, figsize=(13, 3.7 * np.ceil(len(FEATS) / 3)), dpi=200, sharey=True)
 for a, c in zip(axes.flat, FEATS):
     style(a, True)
     a.axhline(0, color=MUTED, lw=1)

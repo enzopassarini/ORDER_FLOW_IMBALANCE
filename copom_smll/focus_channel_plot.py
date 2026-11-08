@@ -38,6 +38,15 @@ TITLE = {"real_rate": ("Ex-ante real rate (level)",
          "infl_exp_r5": ("Inflation: 12m expected IPCA vs. rolling 5-year mean",
                          "x = −(Focus 12-month-ahead IPCA expectation) minus its rolling 5-year mean; "
                          "signal = clip(x / (3 × rolling 5y std), ±1). High expected inflation → short small caps."),
+         "curve_5y1y_r5": ("Local curve slope (5y − 1y prefixed yield) vs. rolling 5-year mean",
+                           "x = −(5y − 1y Tesouro prefixado yield) minus its rolling 5-year mean; signal = clip(x / (3 × rolling "
+                           "5y std), ±1). Steep curve → short small caps. Sample from Nov 2010."),
+         "curve_2ysel_r5": ("Local curve: 2y prefixed yield − Selic target, vs. rolling 5-year mean",
+                            "x = −(2y Tesouro prefixado yield − Selic target) minus its rolling 5-year mean; signal = clip(x / "
+                            "(3 × rolling 5y std), ±1). Market pricing hikes → short small caps. Sample from Dec 2009."),
+         "curve_y2_r5": ("2-year prefixed (nominal) yield vs. rolling 5-year mean",
+                         "x = −(2y Tesouro prefixado yield) minus its rolling 5-year mean; signal = clip(x / (3 × rolling 5y "
+                         "std), ±1). High yields → short small caps. Sample from Dec 2009."),
          "disp_ipca": ("IPCA forecast dispersion (revisions)",
                        "x = −(4–8 week change in the cross-sectional std of next-year IPCA forecasts); "
                        "signal = clip(x / (2 × past std), ±1). Rising dispersion → short small caps.")}
