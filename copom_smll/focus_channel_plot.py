@@ -47,6 +47,12 @@ TITLE = {"real_rate": ("Ex-ante real rate (level)",
          "curve_y2_r5": ("2-year prefixed (nominal) yield vs. rolling 5-year mean",
                          "x = −(2y Tesouro prefixado yield) minus its rolling 5-year mean; signal = clip(x / (3 × rolling 5y "
                          "std), ±1). High yields → short small caps. Sample from Dec 2009."),
+         "fwd5y5y_r5": ("5y5y forward rate (local prefixed curve) vs. rolling 5-year mean",
+                        "5y5y = ((1+y10)^10 / (1+y5)^5)^(1/5) − 1 from Tesouro prefixado yields; x = −5y5y minus its rolling 5y mean; "
+                        "signal = clip(x / (3 × rolling 5y std), ±1). High long-forward rate → short small caps."),
+         "fwd5y5y_chg": ("5y5y forward rate, 4–8 week change",
+                         "x = −(average of the 4- and 8-week change in the 5y5y forward); signal = clip(x / (2 × past std), ±1). "
+                         "Rising long-forward rate → short small caps."),
          "disp_ipca": ("IPCA forecast dispersion (revisions)",
                        "x = −(4–8 week change in the cross-sectional std of next-year IPCA forecasts); "
                        "signal = clip(x / (2 × past std), ±1). Rising dispersion → short small caps.")}

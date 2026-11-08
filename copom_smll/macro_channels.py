@@ -84,8 +84,13 @@ raw["curve_5y1y_r5"] = -s51
 raw["curve_5y1y_chg"] = -(((s51 - s51.shift(4)) + (s51 - s51.shift(8))) / 2)
 raw["curve_2ysel_r5"] = -daily_at_fridays("curve_2ysel")[0]
 raw["curve_y2_r5"] = -daily_at_fridays("curve_y2")[0]
+f55, _ = daily_at_fridays("curve_5y5y")
+raw["fwd5y5y_r5"] = -f55
+raw["fwd5y5y_chg"] = -(((f55 - f55.shift(4)) + (f55 - f55.shift(8))) / 2)
+raw["fwd5y4y_r5"] = -daily_at_fridays("curve_5y4y")[0]
+raw["fwd5y5y_1y_r5"] = -daily_at_fridays("curve_5y5y_1y")[0]
 FEATS = list(raw.columns)
-R5 = {"embi_level", "curve_5y1y_r5", "curve_2ysel_r5", "curve_y2_r5"}
+R5 = {"embi_level", "curve_5y1y_r5", "curve_2ysel_r5", "curve_y2_r5", "fwd5y5y_r5", "fwd5y4y_r5", "fwd5y5y_1y_r5"}
 LABEL = {"credit_default": "1 Credit stress: business default rate (Δ)",
          "hh_dsr": "2 Household debt-service ratio (Δ)",
          "epu": "3 Brazil policy uncertainty, EPU (Δ log)",
@@ -95,7 +100,11 @@ LABEL = {"credit_default": "1 Credit stress: business default rate (Δ)",
          "curve_5y1y_r5": "6a Curve slope 5y − 1y vs. 5y mean",
          "curve_5y1y_chg": "6b Curve slope 5y − 1y, 4–8 week change",
          "curve_2ysel_r5": "6c Curve 2y − Selic target vs. 5y mean",
-         "curve_y2_r5": "6d 2y nominal yield vs. 5y mean"}
+         "curve_y2_r5": "6d 2y nominal yield vs. 5y mean",
+         "fwd5y5y_r5": "7a 5y5y forward vs. 5y mean",
+         "fwd5y5y_chg": "7b 5y5y forward, 4–8 week change",
+         "fwd5y4y_r5": "7c 5y4y forward vs. 5y mean (no extrapolation)",
+         "fwd5y5y_1y_r5": "7d 5y5y − 1y yield vs. 5y mean"}
 
 sig = pd.DataFrame(index=fridays)
 for c in FEATS:
@@ -174,7 +183,9 @@ cm = ev[corr_cols].corr()
 cm.to_csv(DATA / "macro_channels_corr.csv", float_format="%.3f")
 print("\nSignal correlations (weekly):\n", cm.round(2).to_string())
 # EPU vs Focus dispersion head to head; EMBI vs Fed and DXY
-for cols in (["curve_5y1y_r5", "RealRate"], ["curve_5y1y_r5", "COPOM", "GDP", "RealRate"],
+for cols in (["fwd5y5y_r5", "COPOM", "GDP", "RealRate"], ["fwd5y5y_chg", "COPOM", "GDP", "RealRate"],
+             ["fwd5y5y_r5", "curve_y2_r5"], ["fwd5y5y_r5", "RealRate"], ["fwd5y5y_chg", "embi_trend"],
+             ["curve_5y1y_r5", "RealRate"], ["curve_5y1y_r5", "COPOM", "GDP", "RealRate"],
              ["curve_2ysel_r5", "COPOM", "GDP", "RealRate"], ["curve_y2_r5", "focus_nominal"],
              ["curve_5y1y_r5", "curve_y2_r5"], ["epu"], ["disp_ipca"], ["epu", "disp_ipca"], ["embi_trend", "dxy_trend", "Fed"],
              ["embi_level", "dxy_trend", "Fed"]):
@@ -218,7 +229,8 @@ for s in ax2.spines.values():
 short = {"credit_default": "credit", "hh_dsr": "hh DSR", "epu": "EPU", "dxy_trend": "DXY", "embi_trend": "EMBI Δ",
          "embi_level": "EMBI lvl", "disp_ipca": "IPCA disp", "Fed": "Fed", "COPOM": "COPOM", "GDP": "GDP",
          "RealRate": "Real rate", "curve_5y1y_r5": "5y−1y", "curve_5y1y_chg": "5y−1y Δ",
-         "curve_2ysel_r5": "2y−Selic", "curve_y2_r5": "2y yld", "focus_nominal": "Focus Selic", "focus_selic_rev": "Selic rev"}
+         "curve_2ysel_r5": "2y−Selic", "curve_y2_r5": "2y yld", "fwd5y5y_r5": "5y5y", "fwd5y5y_chg": "5y5y Δ",
+         "fwd5y4y_r5": "5y4y", "fwd5y5y_1y_r5": "5y5y−1y", "focus_nominal": "Focus Selic", "focus_selic_rev": "Selic rev"}
 im = ax2.imshow(cm.values, cmap="RdBu_r", vmin=-1, vmax=1)
 ax2.set_xticks(range(len(cm)))
 ax2.set_xticklabels([short[c] for c in cm.columns], rotation=60, ha="right", fontsize=7.5)
