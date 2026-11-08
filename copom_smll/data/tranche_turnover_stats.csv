@@ -1,0 +1,10 @@
+,weekly,tranches,reduction
+Avg weekly |Δposition|,0.0187,0.0138,0.2644
+Median weekly |Δposition|,0.0105,0.0099,0.0647
+95th pct weekly |Δposition|,0.0634,0.0403,0.3642
+Largest weekly |Δposition|,0.3290,0.1358,0.5872
+Weeks with |Δ| > 0.05,0.0821,0.0203,0.7529
+Weeks with |Δ| > 0.10,0.0174,0.0039,0.7778
+Turnover per year (position units),0.9758,0.7178,0.2644
+"Turnover per year, both legs",1.9517,1.4357,0.2644
+Sign changes per year,0.5546,0.3529,0.3636
