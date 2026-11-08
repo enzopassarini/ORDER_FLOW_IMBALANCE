@@ -33,13 +33,14 @@ def rebal_days(freq):
     return np.r_[True, key[1:] != key[:-1]]
 
 
-def simulate(tgt, freq, cost=COST):
+def simulate(tgt, freq, cost=COST, band=0.0):
+    """band: on a rebalance day, trade (back to the full target) only if |target - current| > band."""
     reb = rebal_days(freq)
     w = tgt[0]
     gross, net, wts, traded = [], [], [], []
     for t in range(len(dates)):
         tc = 0.0
-        if reb[t]:
+        if reb[t] and abs(tgt[t] - w) > band:
             dw = abs(tgt[t] - w)
             tc = cost * 2 * dw
             traded.append(2 * dw)
