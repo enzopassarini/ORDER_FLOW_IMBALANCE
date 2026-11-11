@@ -1,20 +1,23 @@
 """
-Long-only martingale (doubling-down) mean-reversion backtest on 1h bars,
-with a 5-trading-day time stop.
+Long-only martingale ("vault") backtest on 1h bars, run as one shared-cash portfolio.
 
-Rules (per ticker, one cycle at a time):
-  Entry     : close z-score vs. a rolling SMA < -ENTRY_Z  -> buy 1 unit
-  Martingale: each further drop of STEP_PCT below the last fill price
-              -> buy 2x the previous lot (1, 2, 4, 8, ...), up to MAX_LEVELS fills
-  Exit      : close >= average cost * (1 + TP_PCT)          -> take profit
-              5 trading sessions after the first fill        -> time stop
-              (optional) close <= avg cost * (1 - HARD_STOP) -> stop loss
-  Execution : signals on bar close, fills at the NEXT bar's open (no look-ahead).
-  Costs     : COST_BPS per side on traded notional.
-  Sizing    : each ticker owns 1/N of capital; the unit is sized so a full
-              ladder (1+2+4+...) uses exactly 100% of that sleeve (no leverage).
+Rules per ticker (one cycle at a time):
+  Entry      : close z-score vs. rolling SMA < -ENTRY_Z -> first buy at next bar's open,
+               sized FIRST_BUY_PCT of current total portfolio equity.
+  Adds       : resting limit buys at fixed offsets below the FIRST fill price:
+               -2.25%, -3.54%, -5.04%, -7.00%, -9.85%. Lot k = first lot * SIZE_MULT**k.
+  Take profit: resting limit sell at average entry * (1 + 0.56%); sells TP_SELL_FRAC
+               ("almost everything") and closes the cycle. The leftover runner is held
+               on the side (it does not block a new cycle) and sold at its time stop.
+               Its P&L is credited to the cycle that created it.
+  Time stop  : TIME_STOP_DAYS trading sessions after the first fill -> sell all at next open.
+  Fills      : limit orders fill intrabar when Low/High touch the level (at the open if
+               the bar gaps through). If an add fills on a bar, take profit is not checked
+               until the next bar (conservative intrabar ordering).
+  Costs      : COST_BPS per side. Average entry includes buy costs.
+  Leverage   : not capped; cash may go negative. Gross exposure is reported (no financing cost).
 """
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -22,128 +25,186 @@ import pandas as pd
 
 @dataclass
 class Params:
-    sma_len: int = 35          # ~5 sessions of 7 hourly bars
+    sma_len: int = 35
     entry_z: float = 2.0
-    step_pct: float = 0.02     # add every -2% from last fill
-    max_levels: int = 4        # 1+2+4+8 = 15 units max
-    multiplier: float = 2.0    # 2.0 = classic martingale, 1.0 = flat grid
-    tp_pct: float = 0.01       # +1% over average cost
+    add_levels: tuple = (0.0225, 0.0354, 0.0504, 0.07, 0.0985)
+    size_mult: float = 2.0
+    first_buy_pct: float = 0.00364
+    tp_pct: float = 0.0056
+    tp_sell_frac: float = 0.95
     time_stop_days: int = 5
-    hard_stop: float | None = None
-    cost_bps: float = 5.0      # per side (fees + slippage)
+    cost_bps: float = 5.0
 
 
-def run_ticker(df: pd.DataFrame, p: Params, capital: float = 1.0):
-    o, c = df["Open"].to_numpy(), df["Close"].to_numpy()
-    sma = df["Close"].rolling(p.sma_len).mean()
-    sd = df["Close"].rolling(p.sma_len).std()
-    z = ((df["Close"] - sma) / sd).to_numpy()
-    session = pd.factorize(df.index.normalize())[0]   # trading-session index
-    n = len(df)
+@dataclass
+class _Pos:
+    shares: float = 0.0
+    basis: float = 0.0          # remaining cost (cash paid incl. fees) of held shares
+    spent: float = 0.0          # all cash paid in this cycle
+    received: float = 0.0       # all cash received in this cycle
+    first_fill: float = np.nan
+    base_cash: float = 0.0
+    fills: int = 0
+    start_sess: int = -1
+    entry_time: object = None
+    tp_hit: bool = False
+    max_invested: float = 0.0
+
+
+def run_portfolio(data: dict[str, pd.DataFrame], p: Params, capital: float = 1.0):
+    tickers = list(data)
+    idx = sorted(set().union(*[d.index for d in data.values()]))
+    idx = pd.DatetimeIndex(idx)
+    sess = pd.factorize(idx.normalize())[0]
+    al = {t: data[t].reindex(idx) for t in tickers}
+    O = np.column_stack([al[t]["Open"].to_numpy() for t in tickers])
+    H = np.column_stack([al[t]["High"].to_numpy() for t in tickers])
+    L = np.column_stack([al[t]["Low"].to_numpy() for t in tickers])
+    C = np.column_stack([al[t]["Close"].to_numpy() for t in tickers])
+    Z = np.column_stack([((data[t]["Close"] - data[t]["Close"].rolling(p.sma_len).mean())
+                          / data[t]["Close"].rolling(p.sma_len).std()).reindex(idx).to_numpy()
+                         for t in tickers])
+    last = pd.DataFrame(C).ffill().bfill().to_numpy()   # mark-to-market prices
     cost = p.cost_bps / 1e4
-    lot_weights = p.multiplier ** np.arange(p.max_levels)
-    unit_cash = capital / lot_weights.sum()
+    levels = np.asarray(p.add_levels)
 
-    cash, shares = capital, 0.0
-    level, last_fill, start_sess, entry_i = 0, np.nan, -1, -1
-    cost_basis = 0.0
-    pending = None                 # ("buy", cash_amount) or ("sell",) for next open
-    equity = np.empty(n)
-    exposure = np.empty(n)
+    cash = capital
+    pos = [_Pos() for _ in tickers]
+    pending = [None] * len(tickers)                      # "entry" | "exit"
+    runners = [[] for _ in tickers]   # dicts: shares, basis, start_sess, trade, due
+    n = len(idx)
+    equity, gross = np.empty(n), np.empty(n)
     trades = []
 
+    def buy(ps, cash_amt, px):
+        nonlocal cash
+        ps.shares += cash_amt / px
+        paid = cash_amt * (1 + cost)
+        cash -= paid
+        ps.basis += paid
+        ps.spent += paid
+        ps.fills += 1
+        ps.max_invested = max(ps.max_invested, ps.basis)
+
+    def sell(ps, frac, px):
+        nonlocal cash
+        q = ps.shares * frac
+        got = q * px * (1 - cost)
+        cash += got
+        ps.received += got
+        ps.basis *= (1 - frac)
+        ps.shares -= q
+
+    def close_cycle(j, i, reason):
+        ps = pos[j]
+        if ps.shares > 0:   # leftover runner after a partial take profit
+            runners[j].append(dict(shares=ps.shares, basis=ps.basis, start_sess=ps.start_sess,
+                                   trade=len(trades), due=False))
+        trades.append(dict(
+            ticker=tickers[j], entry_time=ps.entry_time, exit_time=idx[i],
+            fills=ps.fills, tp_hit=ps.tp_hit, reason=reason,
+            max_invested=ps.max_invested, runner_pnl=0.0,
+            pnl=ps.received - (ps.spent - ps.basis),          # runner cost not yet realised
+            ret_on_invested=(ps.received - (ps.spent - ps.basis)) / ps.max_invested))
+        pos[j] = _Pos()
+
+    def mtm_all(i):
+        return sum((q.shares + sum(r["shares"] for r in runners[k])) * last[i, k]
+                   for k, q in enumerate(pos))
+
     for i in range(n):
-        # 1) execute order decided on previous bar's close, at this bar's open
-        if pending is not None:
-            if pending[0] == "buy":
-                amt = min(pending[1], cash / (1 + cost))
-                q = amt / o[i]
-                shares += q
-                cash -= amt * (1 + cost)
-                cost_basis += amt * (1 + cost)
-                last_fill = o[i]
-                if level == 0:
-                    start_sess, entry_i = session[i], i
-                level += 1
-            else:  # sell all
-                proceeds = shares * o[i] * (1 - cost)
-                trades.append(dict(
-                    entry_time=df.index[entry_i], exit_time=df.index[i],
-                    levels=level, invested=cost_basis, pnl=proceeds - cost_basis,
-                    ret_on_invested=proceeds / cost_basis - 1,
-                    ret_on_sleeve=(proceeds - cost_basis) / capital,
-                    reason=pending[1], bars=i - entry_i))
-                cash += proceeds
-                shares, level, cost_basis, last_fill = 0.0, 0, 0.0, np.nan
-            pending = None
+        for j in range(len(tickers)):
+            o, h, l, c = O[i, j], H[i, j], L[i, j], C[i, j]
+            if np.isnan(o):
+                continue
+            ps = pos[j]
 
-        equity[i] = cash + shares * c[i]
-        exposure[i] = shares * c[i]
-        if i == n - 1 or np.isnan(z[i]):
-            continue
+            # runners due for their time stop are sold at this open
+            keep = []
+            for rn in runners[j]:
+                if rn["due"]:
+                    got = rn["shares"] * o * (1 - cost)
+                    cash += got
+                    tr = trades[rn["trade"]]
+                    tr["pnl"] += got - rn["basis"]
+                    tr["runner_pnl"] = got - rn["basis"]
+                    tr["ret_on_invested"] = tr["pnl"] / tr["max_invested"]
+                else:
+                    keep.append(rn)
+            runners[j] = keep
 
-        # 2) decide on this bar's close
-        if level == 0:
-            if z[i] < -p.entry_z:
-                pending = ("buy", unit_cash * lot_weights[0])
-        else:
-            avg = cost_basis / shares
-            if c[i] >= avg * (1 + p.tp_pct):
-                pending = ("sell", "take_profit")
-            elif session[i] - start_sess >= p.time_stop_days:
-                pending = ("sell", "time_stop")
-            elif p.hard_stop is not None and c[i] <= avg * (1 - p.hard_stop):
-                pending = ("sell", "hard_stop")
-            elif level < p.max_levels and c[i] <= last_fill * (1 - p.step_pct):
-                pending = ("buy", unit_cash * lot_weights[level])
+            # orders decided at the previous close, filled at this open
+            if pending[j] == "entry":
+                buy(ps, ps.base_cash, o)
+                ps.first_fill, ps.start_sess, ps.entry_time = o, sess[i], idx[i]
+            elif pending[j] == "exit":
+                sell(ps, 1.0, o)
+                close_cycle(j, i, "time_stop")
+                ps = pos[j]
+            pending[j] = None
 
-    eq = pd.Series(equity, index=df.index)
-    eq.attrs["exposure"] = pd.Series(exposure, index=df.index)
+            # resting limit orders during the bar
+            if ps.shares > 0:
+                added = False
+                while ps.fills <= len(levels):
+                    lvl = ps.first_fill * (1 - levels[ps.fills - 1])
+                    if l > lvl:
+                        break
+                    buy(ps, ps.base_cash * p.size_mult ** ps.fills, min(o, lvl))
+                    added = True
+                if not added:
+                    target = ps.basis / ps.shares * (1 + p.tp_pct)
+                    if h >= target:
+                        sell(ps, p.tp_sell_frac, max(o, target))
+                        ps.tp_hit = True
+                        close_cycle(j, i, "take_profit")
+                        ps = pos[j]
+
+            # decisions at this bar's close
+            if i < n - 1:
+                for rn in runners[j]:
+                    rn["due"] = sess[i] - rn["start_sess"] >= p.time_stop_days
+            if ps.shares > 0:
+                if sess[i] - ps.start_sess >= p.time_stop_days and i < n - 1:
+                    pending[j] = "exit"
+            elif i < n - 1 and not np.isnan(Z[i, j]) and Z[i, j] < -p.entry_z:
+                eq_now = cash + mtm_all(i)
+                ps.base_cash = p.first_buy_pct * eq_now
+                pending[j] = "entry"
+
+        mtm = mtm_all(i)
+        equity[i] = cash + mtm
+        gross[i] = mtm / equity[i]
+
+    eq = pd.Series(equity, index=idx)
+    eq.attrs["exposure"] = pd.Series(gross, index=idx)
     return eq, pd.DataFrame(trades)
-
-
-def run_portfolio(data: dict[str, pd.DataFrame], p: Params):
-    cap = 1.0 / len(data)
-    eqs, exps, trades = {}, {}, []
-    for t, df in data.items():
-        eq, tr = run_ticker(df, p, cap)
-        eqs[t], exps[t] = eq, eq.attrs["exposure"]
-        if len(tr):
-            tr.insert(0, "ticker", t)
-            trades.append(tr)
-    eq = pd.DataFrame(eqs).sort_index().ffill().bfill()
-    port = eq.sum(axis=1)
-    port.attrs["exposure"] = pd.DataFrame(exps).sort_index().ffill().fillna(0).sum(axis=1) / port
-    return port, eq, (pd.concat(trades, ignore_index=True) if trades else pd.DataFrame())
 
 
 def stats(eq: pd.Series, trades: pd.DataFrame | None = None) -> dict:
     daily = eq.groupby(eq.index.normalize()).last()
     r = daily.pct_change().dropna()
     yrs = len(daily) / 252
-    dd = eq / eq.cummax() - 1
     s = dict(total_ret=eq.iloc[-1] / eq.iloc[0] - 1,
              cagr=(eq.iloc[-1] / eq.iloc[0]) ** (1 / yrs) - 1,
              vol=r.std() * np.sqrt(252),
              sharpe=r.mean() / r.std() * np.sqrt(252) if r.std() > 0 else np.nan,
-             max_dd=dd.min())
+             max_dd=(eq / eq.cummax() - 1).min())
     if "exposure" in eq.attrs:
         s["avg_exposure"] = eq.attrs["exposure"].mean()
         s["max_exposure"] = eq.attrs["exposure"].max()
     if trades is not None and len(trades):
         s |= dict(n_trades=len(trades),
                   win_rate=(trades.pnl > 0).mean(),
-                  avg_win=trades.loc[trades.pnl > 0, "ret_on_sleeve"].mean(),
-                  avg_loss=trades.loc[trades.pnl <= 0, "ret_on_sleeve"].mean(),
-                  pct_time_stop=(trades.reason == "time_stop").mean(),
-                  pct_full_ladder=(trades.levels == trades.levels.max()).mean())
+                  avg_win=trades.loc[trades.pnl > 0, "pnl"].mean(),
+                  avg_loss=trades.loc[trades.pnl <= 0, "pnl"].mean(),
+                  worst=trades.pnl.min(),
+                  tp_rate=trades.tp_hit.mean(),
+                  full_ladder=(trades.fills == trades.fills.max()).mean())
     return s
 
 
 if __name__ == "__main__":
     from fetch_data import load
-    data = load("1h")
-    p = Params()
-    port, _, tr = run_portfolio(data, p)
-    print(asdict(p))
-    print(pd.Series(stats(port, tr)).round(4))
+    eq, tr = run_portfolio(load("1h"), Params())
+    print(pd.Series(stats(eq, tr)).round(5))
