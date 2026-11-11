@@ -36,3 +36,28 @@ def load(interval: str = "1h") -> dict[str, pd.DataFrame]:
 
 if __name__ == "__main__":
     fetch()
+
+
+def relative_to_basket(data: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """
+    Each stock divided by an equal-weight basket of all tickers (rebalanced every bar).
+    Trading the ratio approximates long stock / short basket (or the reverse).
+    The basket gets its own open (from constituents' opens) so ratio opens are tradable.
+    Intrabar ratio High/Low are unknown: use the conservative of stock High/Low over the
+    basket's open and close, bounded by the ratio open/close.
+    """
+    close = pd.DataFrame({t: d["Close"] for t, d in data.items()}).sort_index()
+    opn = pd.DataFrame({t: d["Open"] for t, d in data.items()}).reindex(close.index)
+    prev = close.ffill().shift(1)
+    gap = (opn / prev - 1).mean(axis=1).fillna(0)          # basket prev close -> open
+    intra = (close / opn - 1).mean(axis=1).fillna(0)       # basket open -> close
+    b_close = ((1 + gap) * (1 + intra)).cumprod()
+    b_open = b_close.shift(1).fillna(1.0) * (1 + gap)
+    out = {}
+    for t, d in data.items():
+        bo, bc = b_open.reindex(d.index), b_close.reindex(d.index)
+        o, c = d["Open"] / bo, d["Close"] / bc
+        h = pd.concat([o, c, pd.concat([d["High"] / bo, d["High"] / bc], axis=1).min(axis=1)], axis=1).max(axis=1)
+        l = pd.concat([o, c, pd.concat([d["Low"] / bo, d["Low"] / bc], axis=1).max(axis=1)], axis=1).min(axis=1)
+        out[t] = pd.DataFrame(dict(Open=o, High=h, Low=l, Close=c, Volume=d["Volume"]))
+    return out

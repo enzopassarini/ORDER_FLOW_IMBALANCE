@@ -54,3 +54,65 @@ Costs (base): +2.3% at 0 bps, +1.9% at 2.5 bps, +1.5% at 5 bps, +0.9% at 10 bps 
 
 Caveats: survivorship (today's large caps), Yahoo intraday quality, hourly bars (intrabar order of fills unknown),
 no margin financing cost.
+
+---
+
+# Long/short grids (`long_short.py`)
+
+The same vault rules, mirrored for shorts. A short cycle opens with a short sale, adds at **+2.25 … +9.85% above** the first fill,
+covers 95% at **average entry −0.56%**, and has the same 5-day time stop. Shorts pay a 1%/yr borrow fee.
+Each (ticker, side) runs its own cycle, so a stock can hold a long and a short ladder at the same time.
+
+Entry modes:
+- **signal**: long when z < −2, short when z > +2 (35-bar SMA)
+- **always**: open a new cycle as soon as the book is flat (classic always-on grid)
+
+Underlyings:
+- **stocks**: the 10 stocks outright
+- **vs basket**: each stock divided by an equal-weight, every-bar-rebalanced basket of the 10. This is market-neutral
+  (long stock/short basket or the reverse). It is charged 10 bps per side (two legs) and borrow on the full notional.
+
+| Variant | Total ret | Sharpe | Max DD | Max gross exp. | Cycles | Win rate |
+|---|---|---|---|---|---|---|
+| stocks, signal, long (previous base) | +1.5% | 0.25 | −2.4% | 77% | 815 | 92% |
+| stocks, signal, short | −11.2% | −1.11 | −14.4% | 159% | 854 | 88% |
+| stocks, signal, long+short | −9.8% | −0.82 | −15.0% | 159% | 1,669 | 90% |
+| stocks, always, long | +1.8% | 0.17 | −5.2% | 128% | 5,801 | 93% |
+| stocks, always, short | −14.0% | −0.68 | −26.5% | 200% | 5,562 | 93% |
+| stocks, always, long+short | −12.2% | −0.51 | −23.6% | 203% | 11,363 | 93% |
+| vs basket, signal, long | +1.0% | 0.24 | −1.3% | 34% | 728 | 86% |
+| vs basket, signal, short | −3.2% | −0.85 | −3.8% | 35% | 761 | 85% |
+| vs basket, signal, long+short | −2.3% | −0.37 | −4.1% | 37% | 1,489 | 85% |
+| vs basket, always, long+short | −11.1% | −0.77 | −15.5% | 211% | 8,254 | 86% |
+
+P&L by side in the two-sided books (sum over cycles, % of equity):
+
+| Book | Long TP | Long time stop | Short TP | Short time stop |
+|---|---|---|---|---|
+| stocks, signal | +6.1% | −4.7% | +5.2% | **−16.3%** |
+| stocks, always | +30.1% | −28.7% | +35.9% | **−49.0%** |
+| vs basket, signal | +4.6% | −2.8% | +3.2% | −6.3% |
+| vs basket, always | +20.3% | −24.2% | +20.7% | −27.3% |
+
+Sensitivity, signal long+short on stocks: no costs/borrow −7.6%, sell 100% −9.6%, entry z 1.5 −10.3%, z 2.5 −4.3%,
+1x lots −3.4%. Without a time stop it made +19.6%, but only by holding losing shorts until they recovered (max gross 162%);
+its 100% win rate counts closed cycles only. Vs basket, signal long+short: +1.6% with zero costs, +15.1% with no time stop.
+
+## Takeaways
+- **Adding shorts hurts.** Short cycles win 88–93% of the time, but the time stop on short ladders lost 16% of equity
+  (signal) and 49% (always-on). The tail is in sharp rallies (Aug 2024, Jan 2026), when several short ladders filled
+  completely and gross exposure went to 160–200%.
+- **Two-sided books don't hedge:** long and short ladders open on different stocks at different times, so net exposure
+  stays near zero on average while gross exposure and tail risk add up.
+- **Always-on grids churn.** About 7× more cycles, with costs and time-stop losses outweighing the TP harvest. Only the long
+  side roughly breaks even (+1.8%), helped by the market drift.
+- **Market-neutral (vs basket) is smaller but still not an edge:** −2.3% for long+short, +1.6% only at zero costs.
+  The only positive basket variant is long-only (+1.0%).
+- **Nothing beats the long-only signal version on risk-adjusted terms**, and that version is still well below the risk-free rate.
+  The edge, such as it is, is long-side mean reversion in a rising market, not grid mechanics.
+- Removing the time stop makes every variant look good. That comes from holding losers through recoveries in this
+  sample (unbounded tail risk), not from a robust result.
+
+Caveats as above, plus: borrow fees vary by stock and over time, and shorting in B3 needs an available borrow. The basket ratio's
+intrabar high/low are estimated conservatively, and an earlier, naive basket built from the previous close showed a fake +43%
+for the always-on basket grid, so be wary of grids on synthetic spreads.
